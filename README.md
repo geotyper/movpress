@@ -24,6 +24,7 @@ MovPress is a lightweight macOS application for compressing screen recordings an
 - Conversion cancellation
 - Open the result or reveal it in Finder
 - Persistent settings and last-used directory
+- System, light, and dark appearance modes
 - Warnings before overwriting files or when disk space is low
 
 ## Requirements
@@ -65,6 +66,12 @@ open build/MovPress.app
 3. Choose a ready-made profile or adjust the compression settings manually.
 4. Select the output path and start the conversion.
 5. Preview the converted file, open it, or reveal it in Finder.
+
+## Configuration
+
+MovPress stores its persistent settings in a human-readable `movpress.ini` file inside the application configuration directory returned by Qt. On macOS this directory is located under the current user's `~/Library/Preferences` folder. Hover over the theme selector to see the exact path used on your system.
+
+Existing settings from the earlier native macOS preferences storage are migrated automatically when the INI file is created for the first time.
 
 ## Status
 

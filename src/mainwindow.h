@@ -47,6 +47,7 @@ private slots:
     void updatePlaybackPosition(qint64 position);
     void updatePlaybackDuration(qint64 duration);
     void updateCropControls();
+    void applyTheme(int index);
 
 private:
     void setInputFile(const QString &path);
@@ -63,6 +64,7 @@ private:
     QLineEdit *outputEdit_{};
     QComboBox *formatCombo_{};
     QComboBox *profileCombo_{};
+    QComboBox *themeCombo_{};
     QComboBox *widthCombo_{};
     QComboBox *fpsCombo_{};
     QComboBox *presetCombo_{};

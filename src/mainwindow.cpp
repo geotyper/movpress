@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QAudioOutput>
 #include <QCloseEvent>
@@ -24,6 +25,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QMediaPlayer>
+#include <QPalette>
 #include <QSettings>
 #include <QScrollArea>
 #include <QSlider>
@@ -35,6 +37,15 @@
 #include <QVBoxLayout>
 #include <QVideoWidget>
 #include <QWidget>
+
+namespace {
+QString settingsFilePath()
+{
+    const QString directory = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QDir().mkpath(directory);
+    return QDir(directory).filePath("movpress.ini");
+}
+}
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
@@ -69,6 +80,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     layout->addLayout(inputRow);
 
     auto *form = new QFormLayout;
+    themeCombo_ = new QComboBox(central);
+    themeCombo_->addItems({"Системная", "Светлая", "Тёмная"});
+    form->addRow("Тема", themeCombo_);
+
     profileCombo_ = new QComboBox(central);
     profileCombo_->addItems({"Свои настройки", "YouTube", "Хабр GIF", "Telegram", "Максимальное сжатие"});
     form->addRow("Профиль", profileCombo_);
@@ -235,6 +250,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(outputButton, &QPushButton::clicked, this, &MainWindow::chooseOutput);
     connect(formatCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::updateOutputForFormat);
     connect(profileCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::applyProfile);
+    connect(themeCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::applyTheme);
     connect(crfSlider_, &QSlider::valueChanged, crfValue_, [this](int value) { crfValue_->setText(QString::number(value)); });
     connect(startButton_, &QPushButton::clicked, this, &MainWindow::startConversion);
     connect(cancelButton_, &QPushButton::clicked, this, &MainWindow::cancelConversion);
@@ -260,7 +276,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
 void MainWindow::chooseInput()
 {
-    QSettings settings;
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
     const QString path = QFileDialog::getOpenFileName(this, "Выберите видео", settings.value("lastDirectory").toString(),
                                                       "Видео (*.mov *.mp4 *.mkv *.avi *.webm);;Все файлы (*)");
     if (!path.isEmpty()) setInputFile(path);
@@ -273,14 +289,16 @@ void MainWindow::chooseOutput()
                                                       extension.toUpper() + " (*." + extension + ")");
     if (!path.isEmpty()) {
         outputEdit_->setText(path);
-        QSettings().setValue("lastDirectory", QFileInfo(path).absolutePath());
+        QSettings settings(settingsFilePath(), QSettings::IniFormat);
+        settings.setValue("lastDirectory", QFileInfo(path).absolutePath());
     }
 }
 
 void MainWindow::setInputFile(const QString &path)
 {
     inputEdit_->setText(path);
-    QSettings().setValue("lastDirectory", QFileInfo(path).absolutePath());
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    settings.setValue("lastDirectory", QFileInfo(path).absolutePath());
     previewingOutput_ = false;
     mediaPlayer_->setSource(QUrl::fromLocalFile(path));
     updateOutputForFormat();
@@ -573,6 +591,46 @@ void MainWindow::updateCropControls()
     for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_}) spin->setEnabled(enabled);
 }
 
+void MainWindow::applyTheme(int index)
+{
+    static const QPalette systemPalette = qApp->palette();
+    if (index == 0) {
+        qApp->setPalette(systemPalette);
+        return;
+    }
+
+    QPalette palette;
+    if (index == 1) {
+        palette.setColor(QPalette::Window, QColor(246, 246, 246));
+        palette.setColor(QPalette::WindowText, QColor(25, 25, 25));
+        palette.setColor(QPalette::Base, Qt::white);
+        palette.setColor(QPalette::AlternateBase, QColor(238, 238, 238));
+        palette.setColor(QPalette::Text, QColor(25, 25, 25));
+        palette.setColor(QPalette::Button, QColor(236, 236, 236));
+        palette.setColor(QPalette::ButtonText, QColor(25, 25, 25));
+        palette.setColor(QPalette::Highlight, QColor(0, 122, 255));
+        palette.setColor(QPalette::HighlightedText, Qt::white);
+        palette.setColor(QPalette::PlaceholderText, QColor(110, 110, 110));
+    } else {
+        palette.setColor(QPalette::Window, QColor(30, 31, 34));
+        palette.setColor(QPalette::WindowText, QColor(235, 235, 235));
+        palette.setColor(QPalette::Base, QColor(22, 23, 25));
+        palette.setColor(QPalette::AlternateBase, QColor(38, 39, 43));
+        palette.setColor(QPalette::Text, QColor(235, 235, 235));
+        palette.setColor(QPalette::Button, QColor(48, 49, 54));
+        palette.setColor(QPalette::ButtonText, QColor(235, 235, 235));
+        palette.setColor(QPalette::BrightText, Qt::white);
+        palette.setColor(QPalette::Highlight, QColor(10, 132, 255));
+        palette.setColor(QPalette::HighlightedText, Qt::white);
+        palette.setColor(QPalette::ToolTipBase, QColor(48, 49, 54));
+        palette.setColor(QPalette::ToolTipText, Qt::white);
+        palette.setColor(QPalette::PlaceholderText, QColor(145, 145, 145));
+        palette.setColor(QPalette::Disabled, QPalette::Text, QColor(105, 105, 105));
+        palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(105, 105, 105));
+    }
+    qApp->setPalette(palette);
+}
+
 void MainWindow::togglePlayback()
 {
     if (mediaPlayer_->playbackState() == QMediaPlayer::PlayingState)
@@ -644,8 +702,16 @@ void MainWindow::updatePreviewRange(bool seekToStart)
 
 void MainWindow::loadSettings()
 {
-    QSettings settings;
+    const bool needsMigration = !QFileInfo::exists(settingsFilePath());
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    if (needsMigration) {
+        QSettings legacySettings;
+        for (const QString &key : legacySettings.allKeys())
+            settings.setValue(key, legacySettings.value(key));
+    }
     restoreGeometry(settings.value("windowGeometry").toByteArray());
+    themeCombo_->setCurrentIndex(settings.value("theme", 0).toInt());
+    themeCombo_->setToolTip("Настройки: " + settingsFilePath());
     widthCombo_->setCurrentIndex(qMax(0, widthCombo_->findData(settings.value("width", 1280).toInt())));
     fpsCombo_->setCurrentIndex(qMax(0, fpsCombo_->findData(settings.value("fps", 30).toInt())));
     crfSlider_->setValue(settings.value("crf", 26).toInt());
@@ -655,13 +721,15 @@ void MainWindow::loadSettings()
 
 void MainWindow::saveSettings() const
 {
-    QSettings settings;
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
     settings.setValue("windowGeometry", saveGeometry());
     settings.setValue("width", widthCombo_->currentData());
     settings.setValue("fps", fpsCombo_->currentData());
     settings.setValue("crf", crfSlider_->value());
     settings.setValue("preset", presetCombo_->currentText());
     settings.setValue("audio", audioCheck_->isChecked());
+    settings.setValue("theme", themeCombo_->currentIndex());
+    settings.sync();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
