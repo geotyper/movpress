@@ -12,6 +12,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -24,6 +25,7 @@
 #include <QPushButton>
 #include <QMediaPlayer>
 #include <QSettings>
+#include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -37,7 +39,8 @@
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     setWindowTitle("MovPress");
-    resize(700, 640);
+    resize(1100, 700);
+    setMinimumSize(900, 560);
     setAcceptDrops(true);
 
     auto *central = new QWidget(this);
@@ -142,7 +145,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     cropY_ = new QSpinBox(central);
     cropWidth_ = new QSpinBox(central);
     cropHeight_ = new QSpinBox(central);
-    for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_}) spin->setRange(0, 16384);
+    for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_}) {
+        spin->setRange(0, 16384);
+        spin->setMaximumWidth(82);
+    }
     cropRow->addWidget(new QLabel("X", central));
     cropRow->addWidget(cropX_);
     cropRow->addWidget(new QLabel("Y", central));
@@ -152,12 +158,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     cropRow->addWidget(new QLabel("Высота", central));
     cropRow->addWidget(cropHeight_);
     form->addRow("Область", cropRow);
-    layout->addLayout(form);
+
+    auto *settingsPane = new QWidget(central);
+    form->setContentsMargins(12, 8, 12, 8);
+    settingsPane->setLayout(form);
+    auto *settingsScroll = new QScrollArea(central);
+    settingsScroll->setWidgetResizable(true);
+    settingsScroll->setFrameShape(QFrame::NoFrame);
+    settingsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    settingsScroll->setWidget(settingsPane);
+    settingsScroll->setMinimumWidth(430);
 
     videoWidget_ = new QVideoWidget(central);
-    videoWidget_->setMinimumHeight(220);
+    videoWidget_->setMinimumSize(360, 240);
     videoWidget_->setStyleSheet("background: #202124; border-radius: 6px;");
-    layout->addWidget(videoWidget_);
     mediaPlayer_ = new QMediaPlayer(this);
     audioOutput_ = new QAudioOutput(this);
     audioOutput_->setVolume(0.7f);
@@ -173,7 +187,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     playbackRow->addWidget(playButton_);
     playbackRow->addWidget(playbackSlider_, 1);
     playbackRow->addWidget(playbackTimeLabel_);
-    layout->addLayout(playbackRow);
+
+    auto *previewPane = new QWidget(central);
+    auto *previewLayout = new QVBoxLayout(previewPane);
+    previewLayout->setContentsMargins(0, 0, 8, 0);
+    previewLayout->addWidget(new QLabel("Предпросмотр", previewPane));
+    previewLayout->addWidget(videoWidget_, 1);
+    previewLayout->addLayout(playbackRow);
+
+    auto *contentRow = new QHBoxLayout;
+    contentRow->setSpacing(16);
+    contentRow->addWidget(previewPane, 3);
+    contentRow->addWidget(settingsScroll, 2);
+    layout->addLayout(contentRow, 1);
 
     auto [outputRow, outputButton] = fileRow(outputEdit_, "Куда сохранить…", central);
     layout->addLayout(outputRow);
