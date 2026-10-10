@@ -4,6 +4,8 @@
 
 MovPress is a lightweight macOS application for compressing screen recordings and creating optimized GIFs. It provides a Qt 6 desktop interface and uses the system-installed `ffmpeg` and `ffprobe` tools for media processing.
 
+![MovPress application window](docs/screenshot.png)
+
 ## Features
 
 - Export to MP4/H.264 or GIF with an adaptive color palette
