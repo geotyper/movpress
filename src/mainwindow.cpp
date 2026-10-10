@@ -281,6 +281,7 @@ void MainWindow::setInputFile(const QString &path)
 {
     inputEdit_->setText(path);
     QSettings().setValue("lastDirectory", QFileInfo(path).absolutePath());
+    previewingOutput_ = false;
     mediaPlayer_->setSource(QUrl::fromLocalFile(path));
     updateOutputForFormat();
     probeInput();
@@ -416,6 +417,7 @@ void MainWindow::syncTrimFromSliders()
     rangeLabel_->setText(QString("%1 — %2 · фрагмент %3")
                              .arg(formattedTime(start), formattedTime(end), formattedTime(end - start)));
     syncingTrim_ = false;
+    updatePreviewRange();
 }
 
 void MainWindow::syncSlidersFromTrim()
@@ -431,6 +433,7 @@ void MainWindow::syncSlidersFromTrim()
     rangeLabel_->setText(QString("%1 — %2 · фрагмент %3")
                              .arg(formattedTime(start), formattedTime(end), formattedTime(end - start)));
     syncingTrim_ = false;
+    updatePreviewRange();
 }
 
 QStringList MainWindow::ffmpegArguments() const
@@ -544,6 +547,7 @@ void MainWindow::conversionFinished(int exitCode, QProcess::ExitStatus status)
                                   .arg(saved, 0, 'f', 0));
         openButton_->setEnabled(true);
         revealButton_->setEnabled(true);
+        previewingOutput_ = true;
         mediaPlayer_->setSource(QUrl::fromLocalFile(outputEdit_->text()));
     } else {
         statusLabel_->setText("Ошибка конвертации");
@@ -573,8 +577,17 @@ void MainWindow::togglePlayback()
 {
     if (mediaPlayer_->playbackState() == QMediaPlayer::PlayingState)
         mediaPlayer_->pause();
-    else
+    else {
+        if (!previewingOutput_) {
+            const qint64 start = qRound64(startSpin_->value() * 1000.0);
+            const qint64 end = durationSpin_->value() > 0
+                                   ? start + qRound64(durationSpin_->value() * 1000.0)
+                                   : qRound64(sourceDuration_ * 1000.0);
+            if (mediaPlayer_->position() < start || mediaPlayer_->position() >= end - 50)
+                mediaPlayer_->setPosition(start);
+        }
         mediaPlayer_->play();
+    }
 }
 
 void MainWindow::seekPreview(int value)
@@ -584,6 +597,19 @@ void MainWindow::seekPreview(int value)
 
 void MainWindow::updatePlaybackPosition(qint64 position)
 {
+    if (!previewingOutput_ && !resettingPlayback_ && sourceDuration_ > 0) {
+        const qint64 start = qRound64(startSpin_->value() * 1000.0);
+        const qint64 end = durationSpin_->value() > 0
+                               ? start + qRound64(durationSpin_->value() * 1000.0)
+                               : qRound64(sourceDuration_ * 1000.0);
+        if (position >= end - 20 && mediaPlayer_->playbackState() == QMediaPlayer::PlayingState) {
+            resettingPlayback_ = true;
+            mediaPlayer_->pause();
+            mediaPlayer_->setPosition(start);
+            resettingPlayback_ = false;
+            return;
+        }
+    }
     if (!playbackSlider_->isSliderDown()) playbackSlider_->setValue(static_cast<int>(position));
     playbackTimeLabel_->setText(QString("%1 / %2")
                                     .arg(formattedTime(position / 1000.0),
@@ -592,8 +618,28 @@ void MainWindow::updatePlaybackPosition(qint64 position)
 
 void MainWindow::updatePlaybackDuration(qint64 duration)
 {
-    playbackSlider_->setRange(0, static_cast<int>(duration));
+    if (previewingOutput_)
+        playbackSlider_->setRange(0, static_cast<int>(duration));
+    else
+        updatePreviewRange(false);
     updatePlaybackPosition(mediaPlayer_->position());
+}
+
+void MainWindow::updatePreviewRange(bool seekToStart)
+{
+    if (previewingOutput_ || !mediaPlayer_ || sourceDuration_ <= 0) return;
+    const qint64 start = qRound64(startSpin_->value() * 1000.0);
+    const qint64 end = durationSpin_->value() > 0
+                           ? qMin(qRound64(sourceDuration_ * 1000.0),
+                                  start + qRound64(durationSpin_->value() * 1000.0))
+                           : qRound64(sourceDuration_ * 1000.0);
+    playbackSlider_->setRange(static_cast<int>(start), static_cast<int>(qMax(start, end)));
+    if (seekToStart) {
+        mediaPlayer_->pause();
+        mediaPlayer_->setPosition(start);
+    }
+    playbackTimeLabel_->setText(QString("%1 / %2")
+                                    .arg(formattedTime(start / 1000.0), formattedTime(end / 1000.0)));
 }
 
 void MainWindow::loadSettings()

@@ -57,6 +57,7 @@ private:
     QStringList ffmpegArguments() const;
     void loadSettings();
     void saveSettings() const;
+    void updatePreviewRange(bool seekToStart = true);
 
     QLineEdit *inputEdit_{};
     QLineEdit *outputEdit_{};
@@ -97,6 +98,8 @@ private:
     double targetDuration_{};
     qint64 sourceSize_{};
     bool syncingTrim_{};
+    bool previewingOutput_{};
+    bool resettingPlayback_{};
     int sourceWidth_{};
     int sourceHeight_{};
 };
