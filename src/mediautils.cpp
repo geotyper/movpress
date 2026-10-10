@@ -2,6 +2,8 @@
 
 #include <QtGlobal>
 
+#include <cmath>
+
 namespace MediaUtils {
 
 TrimRange normalizedTrim(double start, double end, double totalDuration, double minimumDuration)
@@ -37,6 +39,35 @@ QStringList videoFilters(int fps, int width, bool cropEnabled, CropRect crop)
     if (fps > 0) filters << "fps=" + QString::number(fps);
     if (width > 0) filters << "scale=" + QString::number(width) + ":-2:flags=lanczos";
     return filters;
+}
+
+double parseFrameRate(const QString &value)
+{
+    const QStringList parts = value.split('/');
+    bool numeratorOk = false;
+    bool denominatorOk = false;
+    const double numerator = parts.value(0).toDouble(&numeratorOk);
+    const double denominator = parts.size() > 1 ? parts.value(1).toDouble(&denominatorOk) : 1.0;
+    if (parts.size() == 1) denominatorOk = true;
+    if (!numeratorOk || !denominatorOk || numerator <= 0 || denominator <= 0) return 0.0;
+    return numerator / denominator;
+}
+
+TrimRange trimFromFrames(int startFrame, int endFrame, double fps, double totalDuration)
+{
+    if (fps <= 0 || totalDuration <= 0) return {};
+    const int totalFrames = qMax(1, static_cast<int>(std::floor(totalDuration * fps)));
+    startFrame = qBound(0, startFrame, totalFrames - 1);
+    endFrame = qBound(startFrame, endFrame, totalFrames - 1);
+    return {startFrame / fps, qMin(totalDuration, (endFrame + 1) / fps)};
+}
+
+QString frameTrimFilter(int startFrame, int endFrame)
+{
+    startFrame = qMax(0, startFrame);
+    endFrame = qMax(startFrame, endFrame);
+    return QString("trim=start_frame=%1:end_frame=%2,setpts=PTS-STARTPTS")
+        .arg(startFrame).arg(endFrame + 1);
 }
 
 }

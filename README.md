@@ -12,6 +12,7 @@ MovPress is a lightweight macOS application for compressing screen recordings an
 - Built-in playback of both the source and converted video
 - Side-by-side video preview and compression settings
 - Visual selection of the clip start and end points
+- Time-based or frame-accurate trim controls
 - Preview playback limited to the selected clip range
 - Custom start time and duration
 - Configurable resolution, frame rate, CRF, and encoding preset

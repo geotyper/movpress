@@ -16,6 +16,7 @@ class QCloseEvent;
 class QAudioOutput;
 class QMediaPlayer;
 class QVideoWidget;
+class QStackedWidget;
 
 class MainWindow final : public QMainWindow
 {
@@ -42,6 +43,8 @@ private slots:
     void applyProfile(int index);
     void syncTrimFromSliders();
     void syncSlidersFromTrim();
+    void syncTrimFromFrames();
+    void updateRangeMode();
     void openResult();
     void revealResult();
     void togglePlayback();
@@ -73,6 +76,10 @@ private:
     QComboBox *presetCombo_{};
     QDoubleSpinBox *startSpin_{};
     QDoubleSpinBox *durationSpin_{};
+    QComboBox *rangeModeCombo_{};
+    QStackedWidget *trimStack_{};
+    QSpinBox *startFrameSpin_{};
+    QSpinBox *endFrameSpin_{};
     QSlider *startRange_{};
     QSlider *endRange_{};
     QLabel *rangeLabel_{};
@@ -111,6 +118,8 @@ private:
     bool resettingPlayback_{};
     int sourceWidth_{};
     int sourceHeight_{};
+    double sourceFps_{};
+    int totalFrames_{};
     QString probedPath_;
     QString activeOutputPath_;
     qint64 activeSourceSize_{};

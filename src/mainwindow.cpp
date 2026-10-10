@@ -17,11 +17,13 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QGridLayout>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMap>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QProgressBar>
@@ -32,6 +34,7 @@
 #include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStorageInfo>
 #include <QSignalBlocker>
@@ -54,7 +57,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     setWindowTitle("MovPress");
     resize(1100, 700);
-    setMinimumSize(900, 560);
+    setMinimumSize(820, 480);
     setAcceptDrops(true);
 
     auto *central = new QWidget(this);
@@ -84,6 +87,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     layout->addLayout(inputRow.first);
 
     auto *form = new QFormLayout;
+    form->setVerticalSpacing(8);
     themeCombo_ = new QComboBox(central);
     themeCombo_->addItems({"Системная", "Светлая", "Тёмная"});
     form->addRow("Тема", themeCombo_);
@@ -96,7 +100,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     formatCombo_->addItems({"MP4 (H.264)", "GIF"});
     form->addRow("Формат", formatCombo_);
 
-    auto *trimRow = new QHBoxLayout;
+    rangeModeCombo_ = new QComboBox(central);
+    rangeModeCombo_->addItems({"Время", "Кадры"});
+    rangeModeCombo_->setItemData(1, 0, Qt::UserRole - 1);
+    rangeModeCombo_->setToolTip("Режим кадров станет доступен после определения FPS видео");
+    form->addRow("Единицы", rangeModeCombo_);
+
+    trimStack_ = new QStackedWidget(central);
+    auto *timePage = new QWidget(trimStack_);
+    auto *trimRow = new QHBoxLayout(timePage);
+    trimRow->setContentsMargins(0, 0, 0, 0);
     startSpin_ = new QDoubleSpinBox(central);
     durationSpin_ = new QDoubleSpinBox(central);
     for (auto *spin : {startSpin_, durationSpin_}) {
@@ -110,7 +123,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     trimRow->addSpacing(16);
     trimRow->addWidget(new QLabel("Длительность", central));
     trimRow->addWidget(durationSpin_);
-    form->addRow("Фрагмент", trimRow);
+    trimStack_->addWidget(timePage);
+
+    auto *framePage = new QWidget(trimStack_);
+    auto *frameRow = new QHBoxLayout(framePage);
+    frameRow->setContentsMargins(0, 0, 0, 0);
+    startFrameSpin_ = new QSpinBox(framePage);
+    endFrameSpin_ = new QSpinBox(framePage);
+    frameRow->addWidget(new QLabel("Первый кадр", framePage));
+    frameRow->addWidget(startFrameSpin_);
+    frameRow->addSpacing(16);
+    frameRow->addWidget(new QLabel("Последний кадр", framePage));
+    frameRow->addWidget(endFrameSpin_);
+    trimStack_->addWidget(framePage);
+    form->addRow("Фрагмент", trimStack_);
 
     auto *rangeBox = new QVBoxLayout;
     startRange_ = new QSlider(Qt::Horizontal, central);
@@ -159,7 +185,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     cropCombo_ = new QComboBox(central);
     cropCombo_->addItems({"Весь кадр", "Своя область"});
     form->addRow("Кадрирование", cropCombo_);
-    auto *cropRow = new QHBoxLayout;
+    auto *cropRow = new QGridLayout;
     cropX_ = new QSpinBox(central);
     cropY_ = new QSpinBox(central);
     cropWidth_ = new QSpinBox(central);
@@ -168,28 +194,33 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         spin->setRange(0, 16384);
         spin->setMaximumWidth(82);
     }
-    cropRow->addWidget(new QLabel("X", central));
-    cropRow->addWidget(cropX_);
-    cropRow->addWidget(new QLabel("Y", central));
-    cropRow->addWidget(cropY_);
-    cropRow->addWidget(new QLabel("Ширина", central));
-    cropRow->addWidget(cropWidth_);
-    cropRow->addWidget(new QLabel("Высота", central));
-    cropRow->addWidget(cropHeight_);
+    cropRow->addWidget(new QLabel("X", central), 0, 0);
+    cropRow->addWidget(cropX_, 0, 1);
+    cropRow->addWidget(new QLabel("Y", central), 0, 2);
+    cropRow->addWidget(cropY_, 0, 3);
+    cropRow->addWidget(new QLabel("Ширина", central), 1, 0);
+    cropRow->addWidget(cropWidth_, 1, 1);
+    cropRow->addWidget(new QLabel("Высота", central), 1, 2);
+    cropRow->addWidget(cropHeight_, 1, 3);
     form->addRow("Область", cropRow);
 
     settingsPane_ = new QWidget(central);
+    settingsPane_->setObjectName("settingsPane");
     form->setContentsMargins(12, 8, 12, 8);
+    form->setSizeConstraint(QLayout::SetMinAndMaxSize);
     settingsPane_->setLayout(form);
     auto *settingsScroll = new QScrollArea(central);
+    settingsScroll->setObjectName("settingsScroll");
+    settingsScroll->viewport()->setObjectName("settingsViewport");
     settingsScroll->setWidgetResizable(true);
     settingsScroll->setFrameShape(QFrame::NoFrame);
     settingsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    settingsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     settingsScroll->setWidget(settingsPane_);
-    settingsScroll->setMinimumWidth(430);
+    settingsScroll->setMinimumWidth(390);
 
     videoWidget_ = new QVideoWidget(central);
-    videoWidget_->setMinimumSize(360, 240);
+    videoWidget_->setMinimumSize(300, 180);
     videoWidget_->setStyleSheet("background: #202124; border-radius: 6px;");
     mediaPlayer_ = new QMediaPlayer(this);
     audioOutput_ = new QAudioOutput(this);
@@ -275,6 +306,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(endRange_, &QSlider::valueChanged, this, &MainWindow::syncTrimFromSliders);
     connect(startSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::syncSlidersFromTrim);
     connect(durationSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::syncSlidersFromTrim);
+    connect(startFrameSpin_, &QSpinBox::valueChanged, this, &MainWindow::syncTrimFromFrames);
+    connect(endFrameSpin_, &QSpinBox::valueChanged, this, &MainWindow::syncTrimFromFrames);
+    connect(rangeModeCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::updateRangeMode);
     connect(&process_, &QProcess::readyReadStandardOutput, this, &MainWindow::readProgress);
     connect(&process_, &QProcess::finished, this, &MainWindow::conversionFinished);
     connect(&process_, &QProcess::errorOccurred, this, &MainWindow::conversionError);
@@ -344,6 +378,8 @@ void MainWindow::probeInput()
     sourceSize_ = QFileInfo(inputEdit_->text()).size();
     sourceWidth_ = 0;
     sourceHeight_ = 0;
+    sourceFps_ = 0;
+    totalFrames_ = 0;
     startRange_->setEnabled(false);
     endRange_->setEnabled(false);
     startRange_->setRange(0, 0);
@@ -380,6 +416,9 @@ void MainWindow::probeFinished(int exitCode, QProcess::ExitStatus status)
         if (stream.value("codec_type").toString() == "video") {
             sourceWidth_ = stream.value("width").toInt();
             sourceHeight_ = stream.value("height").toInt();
+            sourceFps_ = MediaUtils::parseFrameRate(stream.value("avg_frame_rate").toString());
+            if (sourceFps_ <= 0)
+                sourceFps_ = MediaUtils::parseFrameRate(stream.value("r_frame_rate").toString());
             break;
         }
     }
@@ -398,6 +437,14 @@ void MainWindow::probeFinished(int exitCode, QProcess::ExitStatus status)
     durationSpin_->setMaximum(sourceDuration_);
     startSpin_->setValue(0);
     durationSpin_->setValue(0);
+    totalFrames_ = sourceFps_ > 0 ? qMax(1, qFloor(sourceDuration_ * sourceFps_)) : 0;
+    const bool frameModeAvailable = totalFrames_ > 0;
+    rangeModeCombo_->setItemData(1, frameModeAvailable ? QVariant() : QVariant(0), Qt::UserRole - 1);
+    if (!frameModeAvailable && rangeModeCombo_->currentIndex() == 1) rangeModeCombo_->setCurrentIndex(0);
+    startFrameSpin_->setRange(0, qMax(0, totalFrames_ - 1));
+    endFrameSpin_->setRange(0, qMax(0, totalFrames_ - 1));
+    startFrameSpin_->setValue(0);
+    endFrameSpin_->setValue(qMax(0, totalFrames_ - 1));
     cropX_->setMaximum(qMax(0, sourceWidth_ - 2));
     cropY_->setMaximum(qMax(0, sourceHeight_ - 2));
     cropWidth_->setRange(2, qMax(2, sourceWidth_));
@@ -405,11 +452,12 @@ void MainWindow::probeFinished(int exitCode, QProcess::ExitStatus status)
     cropWidth_->setValue(qMax(2, sourceWidth_));
     cropHeight_->setValue(qMax(2, sourceHeight_));
     normalizeCropControls();
-    mediaInfoLabel_->setText(QString("Исходник: %1 · %2×%3 · %4 МБ")
+    mediaInfoLabel_->setText(QString("Исходник: %1 · %2×%3 · %4 FPS · %5 МБ")
                                  .arg(formattedTime(sourceDuration_))
                                  .arg(sourceWidth_).arg(sourceHeight_)
+                                 .arg(sourceFps_, 0, 'f', 2)
                                  .arg(sourceSize_ / 1048576.0, 0, 'f', 1));
-    syncTrimFromSliders();
+    updateRangeMode();
     startButton_->setEnabled(true);
 }
 
@@ -462,6 +510,23 @@ void MainWindow::applyProfile(int index)
 void MainWindow::syncTrimFromSliders()
 {
     if (syncingTrim_ || sourceDuration_ <= 0) return;
+    if (rangeModeCombo_->currentIndex() == 1) {
+        syncingTrim_ = true;
+        const int startFrame = qBound(0, startRange_->value(), qMax(0, totalFrames_ - 1));
+        const int endFrame = qBound(startFrame, endRange_->value(), qMax(startFrame, totalFrames_ - 1));
+        startRange_->setValue(startFrame);
+        endRange_->setValue(endFrame);
+        startFrameSpin_->setValue(startFrame);
+        endFrameSpin_->setValue(endFrame);
+        const auto range = MediaUtils::trimFromFrames(startFrame, endFrame, sourceFps_, sourceDuration_);
+        startSpin_->setValue(range.start);
+        durationSpin_->setValue(endFrame >= totalFrames_ - 1 ? 0 : range.end - range.start);
+        rangeLabel_->setText(QString("кадры %1 — %2 · %3 кадр.")
+                                 .arg(startFrame).arg(endFrame).arg(endFrame - startFrame + 1));
+        syncingTrim_ = false;
+        updatePreviewRange();
+        return;
+    }
     syncingTrim_ = true;
     const auto range = MediaUtils::normalizedTrim(startRange_->value(), endRange_->value(), sourceDuration_,
                                                   qMin(1.0, sourceDuration_));
@@ -486,20 +551,71 @@ void MainWindow::syncSlidersFromTrim()
     const auto range = MediaUtils::normalizedTrim(startSpin_->value(), requestedEnd, sourceDuration_, 0.1);
     startSpin_->setValue(range.start);
     if (durationSpin_->value() > 0) durationSpin_->setValue(range.end - range.start);
-    startRange_->setValue(qRound(range.start));
-    endRange_->setValue(qRound(range.end));
-    rangeLabel_->setText(QString("%1 — %2 · фрагмент %3")
-                             .arg(formattedTime(range.start), formattedTime(range.end),
-                                  formattedTime(range.end - range.start)));
+    if (sourceFps_ > 0 && totalFrames_ > 0) {
+        const int startFrame = qBound(0, qFloor(range.start * sourceFps_), totalFrames_ - 1);
+        const int endFrame = qBound(startFrame, qCeil(range.end * sourceFps_) - 1, totalFrames_ - 1);
+        startFrameSpin_->setValue(startFrame);
+        endFrameSpin_->setValue(endFrame);
+        if (rangeModeCombo_->currentIndex() == 1) {
+            startRange_->setRange(0, totalFrames_ - 1);
+            endRange_->setRange(0, totalFrames_ - 1);
+            startRange_->setValue(startFrame);
+            endRange_->setValue(endFrame);
+            rangeLabel_->setText(QString("кадры %1 — %2 · %3 кадр.")
+                                     .arg(startFrame).arg(endFrame).arg(endFrame - startFrame + 1));
+        }
+    }
+    if (rangeModeCombo_->currentIndex() == 0) {
+        const int maximum = qMax(1, qCeil(sourceDuration_));
+        startRange_->setRange(0, maximum);
+        endRange_->setRange(0, maximum);
+        startRange_->setValue(qRound(range.start));
+        endRange_->setValue(qRound(range.end));
+        rangeLabel_->setText(QString("%1 — %2 · фрагмент %3")
+                                 .arg(formattedTime(range.start), formattedTime(range.end),
+                                      formattedTime(range.end - range.start)));
+    }
     syncingTrim_ = false;
     updatePreviewRange();
+}
+
+void MainWindow::syncTrimFromFrames()
+{
+    if (syncingTrim_ || sourceFps_ <= 0 || totalFrames_ <= 0) return;
+    syncingTrim_ = true;
+    const int startFrame = qBound(0, startFrameSpin_->value(), totalFrames_ - 1);
+    const int endFrame = qBound(startFrame, endFrameSpin_->value(), totalFrames_ - 1);
+    startFrameSpin_->setValue(startFrame);
+    endFrameSpin_->setValue(endFrame);
+    const auto range = MediaUtils::trimFromFrames(startFrame, endFrame, sourceFps_, sourceDuration_);
+    startSpin_->setValue(range.start);
+    durationSpin_->setValue(endFrame >= totalFrames_ - 1 ? 0 : range.end - range.start);
+    if (rangeModeCombo_->currentIndex() == 1) {
+        startRange_->setValue(startFrame);
+        endRange_->setValue(endFrame);
+        rangeLabel_->setText(QString("кадры %1 — %2 · %3 кадр.")
+                                 .arg(startFrame).arg(endFrame).arg(endFrame - startFrame + 1));
+    }
+    syncingTrim_ = false;
+    updatePreviewRange();
+}
+
+void MainWindow::updateRangeMode()
+{
+    if (rangeModeCombo_->currentIndex() == 1 && sourceFps_ <= 0) {
+        rangeModeCombo_->setCurrentIndex(0);
+        return;
+    }
+    trimStack_->setCurrentIndex(rangeModeCombo_->currentIndex());
+    syncSlidersFromTrim();
 }
 
 QStringList MainWindow::ffmpegArguments() const
 {
     QStringList args{"-hide_banner", "-y"};
-    if (startSpin_->value() > 0) args << "-ss" << QString::number(startSpin_->value());
-    if (durationSpin_->value() > 0) args << "-t" << QString::number(durationSpin_->value());
+    const bool frameTrim = rangeModeCombo_->currentIndex() == 1 && sourceFps_ > 0;
+    if (!frameTrim && startSpin_->value() > 0) args << "-ss" << QString::number(startSpin_->value());
+    if (!frameTrim && durationSpin_->value() > 0) args << "-t" << QString::number(durationSpin_->value());
     args << "-i" << inputEdit_->text();
 
     const int width = widthCombo_->currentData().toInt();
@@ -507,14 +623,25 @@ QStringList MainWindow::ffmpegArguments() const
     const auto crop = MediaUtils::normalizedCrop(sourceWidth_, sourceHeight_,
                                                   {cropX_->value(), cropY_->value(),
                                                    cropWidth_->value(), cropHeight_->value()});
-    const QStringList filters = MediaUtils::videoFilters(fps, width, cropCombo_->currentIndex() == 1, crop);
+    QStringList filters = MediaUtils::videoFilters(fps, width, cropCombo_->currentIndex() == 1, crop);
+    if (frameTrim)
+        filters.prepend(MediaUtils::frameTrimFilter(startFrameSpin_->value(), endFrameSpin_->value()));
 
     if (formatCombo_->currentIndex() == 0) {
         if (!filters.isEmpty()) args << "-vf" << filters.join(',');
         args << "-c:v" << "libx264" << "-crf" << QString::number(crfSlider_->value())
              << "-preset" << presetCombo_->currentText() << "-pix_fmt" << "yuv420p";
         if (!audioCheck_->isChecked()) args << "-an";
-        else args << "-c:a" << "aac" << "-b:a" << "128k";
+        else {
+            if (frameTrim) {
+                const double end = durationSpin_->value() > 0
+                                       ? startSpin_->value() + durationSpin_->value()
+                                       : sourceDuration_;
+                args << "-af" << QString("atrim=start=%1:end=%2,asetpts=PTS-STARTPTS")
+                                   .arg(startSpin_->value(), 0, 'f', 6).arg(end, 0, 'f', 6);
+            }
+            args << "-c:a" << "aac" << "-b:a" << "128k";
+        }
         args << "-movflags" << "+faststart";
     } else {
         const QString base = filters.isEmpty() ? "null" : filters.join(',');
@@ -706,6 +833,10 @@ void MainWindow::applyTheme(int index)
         palette.setColor(QPalette::Disabled, QPalette::Text, QColor(105, 105, 105));
         palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(105, 105, 105));
         qApp->setStyleSheet(R"(
+            QWidget#settingsPane, QWidget#settingsViewport, QScrollArea#settingsScroll {
+                background-color: #1e1f22;
+                border: none;
+            }
             QLineEdit, QComboBox, QAbstractSpinBox {
                 color: #f5f5f5;
                 background-color: #3f4147;
@@ -753,6 +884,21 @@ void MainWindow::applyTheme(int index)
                 color: #ffffff;
                 background-color: #45474d;
                 border: 1px solid #777a82;
+            }
+            QScrollBar:vertical {
+                background: #292b2f;
+                width: 12px;
+                margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #666970;
+                min-height: 28px;
+                border-radius: 5px;
+                margin: 2px;
+            }
+            QScrollBar::handle:vertical:hover { background: #7a7d85; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0;
             }
         )");
     }
@@ -830,13 +976,24 @@ void MainWindow::updatePreviewRange(bool seekToStart)
 
 void MainWindow::loadSettings()
 {
+    const QStringList applicationKeys = {
+        "windowGeometry", "width", "fps", "crf", "preset", "audio", "theme", "lastDirectory"
+    };
     const bool needsMigration = !QFileInfo::exists(settingsFilePath());
     QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    QMap<QString, QVariant> cleanValues;
     if (needsMigration) {
         QSettings legacySettings;
-        for (const QString &key : legacySettings.allKeys())
-            settings.setValue(key, legacySettings.value(key));
+        for (const QString &key : applicationKeys)
+            if (legacySettings.contains(key)) cleanValues.insert(key, legacySettings.value(key));
+    } else {
+        for (const QString &key : applicationKeys)
+            if (settings.contains(key)) cleanValues.insert(key, settings.value(key));
     }
+    settings.clear();
+    for (auto it = cleanValues.cbegin(); it != cleanValues.cend(); ++it)
+        settings.setValue(it.key(), it.value());
+    settings.sync();
     restoreGeometry(settings.value("windowGeometry").toByteArray());
     themeCombo_->setCurrentIndex(settings.value("theme", 0).toInt());
     themeCombo_->setToolTip("Настройки: " + settingsFilePath());
