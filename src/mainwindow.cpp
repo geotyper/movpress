@@ -595,12 +595,14 @@ void MainWindow::applyTheme(int index)
 {
     static const QPalette systemPalette = qApp->palette();
     if (index == 0) {
+        qApp->setStyleSheet({});
         qApp->setPalette(systemPalette);
         return;
     }
 
     QPalette palette;
     if (index == 1) {
+        qApp->setStyleSheet({});
         palette.setColor(QPalette::Window, QColor(246, 246, 246));
         palette.setColor(QPalette::WindowText, QColor(25, 25, 25));
         palette.setColor(QPalette::Base, Qt::white);
@@ -627,6 +629,56 @@ void MainWindow::applyTheme(int index)
         palette.setColor(QPalette::PlaceholderText, QColor(145, 145, 145));
         palette.setColor(QPalette::Disabled, QPalette::Text, QColor(105, 105, 105));
         palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(105, 105, 105));
+        qApp->setStyleSheet(R"(
+            QLineEdit, QComboBox, QAbstractSpinBox {
+                color: #f5f5f5;
+                background-color: #3f4147;
+                border: 1px solid #686b72;
+                border-radius: 6px;
+                padding: 4px 7px;
+                selection-background-color: #0a84ff;
+                selection-color: #ffffff;
+            }
+            QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
+                border: 1px solid #4ca0ff;
+            }
+            QComboBox QAbstractItemView {
+                color: #f5f5f5;
+                background-color: #35373c;
+                border: 1px solid #686b72;
+                selection-background-color: #0a84ff;
+                selection-color: #ffffff;
+            }
+            QPushButton {
+                color: #ffffff;
+                background-color: #5b5e65;
+                border: 1px solid #777a82;
+                border-radius: 6px;
+                padding: 5px 12px;
+            }
+            QPushButton:hover { background-color: #6b6e76; }
+            QPushButton:pressed { background-color: #4c4f55; }
+            QPushButton:default {
+                background-color: #1677d2;
+                border-color: #3c96eb;
+            }
+            QPushButton:default:hover { background-color: #2588e4; }
+            QPushButton:disabled {
+                color: #a7a7a7;
+                background-color: #3b3d42;
+                border-color: #4a4c51;
+            }
+            QLineEdit:disabled, QComboBox:disabled, QAbstractSpinBox:disabled {
+                color: #a7a7a7;
+                background-color: #34363a;
+                border-color: #4a4c51;
+            }
+            QToolTip {
+                color: #ffffff;
+                background-color: #45474d;
+                border: 1px solid #777a82;
+            }
+        )");
     }
     qApp->setPalette(palette);
 }
