@@ -2,7 +2,6 @@
 
 #include <QMainWindow>
 #include <QProcess>
-#include <QTemporaryDir>
 
 class QCheckBox;
 class QComboBox;
@@ -14,6 +13,9 @@ class QPushButton;
 class QSlider;
 class QSpinBox;
 class QCloseEvent;
+class QAudioOutput;
+class QMediaPlayer;
+class QVideoWidget;
 
 class MainWindow final : public QMainWindow
 {
@@ -40,7 +42,10 @@ private slots:
     void syncSlidersFromTrim();
     void openResult();
     void revealResult();
-    void createPreview();
+    void togglePlayback();
+    void seekPreview(int value);
+    void updatePlaybackPosition(qint64 position);
+    void updatePlaybackDuration(qint64 duration);
     void updateCropControls();
 
 private:
@@ -66,7 +71,12 @@ private:
     QSlider *endRange_{};
     QLabel *rangeLabel_{};
     QLabel *mediaInfoLabel_{};
-    QLabel *previewLabel_{};
+    QLabel *playbackTimeLabel_{};
+    QPushButton *playButton_{};
+    QSlider *playbackSlider_{};
+    QMediaPlayer *mediaPlayer_{};
+    QAudioOutput *audioOutput_{};
+    QVideoWidget *videoWidget_{};
     QComboBox *cropCombo_{};
     QSpinBox *cropX_{};
     QSpinBox *cropY_{};
@@ -89,5 +99,4 @@ private:
     bool syncingTrim_{};
     int sourceWidth_{};
     int sourceHeight_{};
-    QTemporaryDir previewDirectory_;
 };

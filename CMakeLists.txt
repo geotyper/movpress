@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Multimedia MultimediaWidgets)
 
 qt_add_executable(MovPress MACOSX_BUNDLE
     src/main.cpp
@@ -14,7 +14,7 @@ qt_add_executable(MovPress MACOSX_BUNDLE
     src/mainwindow.h
 )
 
-target_link_libraries(MovPress PRIVATE Qt6::Widgets)
+target_link_libraries(MovPress PRIVATE Qt6::Widgets Qt6::Multimedia Qt6::MultimediaWidgets)
 
 set_target_properties(MovPress PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER com.geotyper.movpress

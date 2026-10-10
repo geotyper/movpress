@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include <QCheckBox>
+#include <QAudioOutput>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDesktopServices>
@@ -21,7 +22,7 @@
 #include <QMimeData>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QPixmap>
+#include <QMediaPlayer>
 #include <QSettings>
 #include <QSlider>
 #include <QSpinBox>
@@ -30,6 +31,7 @@
 #include <QSignalBlocker>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QVideoWidget>
 #include <QWidget>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
@@ -152,15 +154,26 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     form->addRow("Область", cropRow);
     layout->addLayout(form);
 
-    auto *previewRow = new QHBoxLayout;
-    previewLabel_ = new QLabel("Предпросмотр появится здесь", central);
-    previewLabel_->setAlignment(Qt::AlignCenter);
-    previewLabel_->setMinimumHeight(130);
-    previewLabel_->setStyleSheet("QLabel { background: #202124; color: #aaa; border-radius: 6px; }");
-    auto *previewButton = new QPushButton("Обновить предпросмотр", central);
-    previewRow->addWidget(previewLabel_, 1);
-    previewRow->addWidget(previewButton);
-    layout->addLayout(previewRow);
+    videoWidget_ = new QVideoWidget(central);
+    videoWidget_->setMinimumHeight(220);
+    videoWidget_->setStyleSheet("background: #202124; border-radius: 6px;");
+    layout->addWidget(videoWidget_);
+    mediaPlayer_ = new QMediaPlayer(this);
+    audioOutput_ = new QAudioOutput(this);
+    audioOutput_->setVolume(0.7f);
+    mediaPlayer_->setAudioOutput(audioOutput_);
+    mediaPlayer_->setVideoOutput(videoWidget_);
+
+    auto *playbackRow = new QHBoxLayout;
+    playButton_ = new QPushButton("▶", central);
+    playButton_->setFixedWidth(44);
+    playbackSlider_ = new QSlider(Qt::Horizontal, central);
+    playbackSlider_->setRange(0, 0);
+    playbackTimeLabel_ = new QLabel("0:00 / 0:00", central);
+    playbackRow->addWidget(playButton_);
+    playbackRow->addWidget(playbackSlider_, 1);
+    playbackRow->addWidget(playbackTimeLabel_);
+    layout->addLayout(playbackRow);
 
     auto [outputRow, outputButton] = fileRow(outputEdit_, "Куда сохранить…", central);
     layout->addLayout(outputRow);
@@ -201,7 +214,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(cancelButton_, &QPushButton::clicked, this, &MainWindow::cancelConversion);
     connect(openButton_, &QPushButton::clicked, this, &MainWindow::openResult);
     connect(revealButton_, &QPushButton::clicked, this, &MainWindow::revealResult);
-    connect(previewButton, &QPushButton::clicked, this, &MainWindow::createPreview);
+    connect(playButton_, &QPushButton::clicked, this, &MainWindow::togglePlayback);
+    connect(playbackSlider_, &QSlider::sliderMoved, this, &MainWindow::seekPreview);
+    connect(mediaPlayer_, &QMediaPlayer::positionChanged, this, &MainWindow::updatePlaybackPosition);
+    connect(mediaPlayer_, &QMediaPlayer::durationChanged, this, &MainWindow::updatePlaybackDuration);
+    connect(mediaPlayer_, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
+        playButton_->setText(state == QMediaPlayer::PlayingState ? "❚❚" : "▶");
+    });
     connect(cropCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::updateCropControls);
     connect(startRange_, &QSlider::valueChanged, this, &MainWindow::syncTrimFromSliders);
     connect(endRange_, &QSlider::valueChanged, this, &MainWindow::syncTrimFromSliders);
@@ -236,6 +255,7 @@ void MainWindow::setInputFile(const QString &path)
 {
     inputEdit_->setText(path);
     QSettings().setValue("lastDirectory", QFileInfo(path).absolutePath());
+    mediaPlayer_->setSource(QUrl::fromLocalFile(path));
     updateOutputForFormat();
     probeInput();
 }
@@ -309,7 +329,6 @@ void MainWindow::probeInput()
                                  .arg(sourceWidth_).arg(sourceHeight_)
                                  .arg(sourceSize_ / 1048576.0, 0, 'f', 1));
     syncTrimFromSliders();
-    createPreview();
 }
 
 void MainWindow::updateOutputForFormat()
@@ -453,6 +472,7 @@ void MainWindow::startConversion()
         return;
     }
     setRunning(true);
+    mediaPlayer_->pause();
     progressBuffer_.clear();
     targetDuration_ = durationSpin_->value() > 0
                           ? durationSpin_->value()
@@ -498,6 +518,7 @@ void MainWindow::conversionFinished(int exitCode, QProcess::ExitStatus status)
                                   .arg(saved, 0, 'f', 0));
         openButton_->setEnabled(true);
         revealButton_->setEnabled(true);
+        mediaPlayer_->setSource(QUrl::fromLocalFile(outputEdit_->text()));
     } else {
         statusLabel_->setText("Ошибка конвертации");
         QMessageBox::critical(this, "MovPress", QString::fromUtf8(process_.readAllStandardError()).right(3000));
@@ -522,33 +543,31 @@ void MainWindow::updateCropControls()
     for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_}) spin->setEnabled(enabled);
 }
 
-void MainWindow::createPreview()
+void MainWindow::togglePlayback()
 {
-    if (!QFileInfo::exists(inputEdit_->text()) || !previewDirectory_.isValid()) return;
-    const QString ffmpeg = findTool("ffmpeg");
-    if (ffmpeg.isEmpty()) return;
-    const QString previewPath = previewDirectory_.filePath("preview.jpg");
-    QStringList args{"-hide_banner", "-loglevel", "error", "-y", "-ss",
-                     QString::number(startSpin_->value()), "-i", inputEdit_->text(), "-frames:v", "1"};
-    QStringList filters;
-    if (cropCombo_->currentIndex() == 1) {
-        const int cropWidth = qMax(2, qMin(cropWidth_->value(), sourceWidth_ - cropX_->value()) & ~1);
-        const int cropHeight = qMax(2, qMin(cropHeight_->value(), sourceHeight_ - cropY_->value()) & ~1);
-        filters << QString("crop=%1:%2:%3:%4")
-                       .arg(cropWidth)
-                       .arg(cropHeight)
-                       .arg(cropX_->value()).arg(cropY_->value());
-    }
-    filters << "scale=480:-2:flags=lanczos";
-    args << "-vf" << filters.join(',') << previewPath;
-    QProcess preview;
-    preview.start(ffmpeg, args);
-    if (preview.waitForFinished(5000) && preview.exitCode() == 0) {
-        const QPixmap image(previewPath);
-        previewLabel_->setPixmap(image.scaled(480, 260, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    } else {
-        previewLabel_->setText("Не удалось создать предпросмотр");
-    }
+    if (mediaPlayer_->playbackState() == QMediaPlayer::PlayingState)
+        mediaPlayer_->pause();
+    else
+        mediaPlayer_->play();
+}
+
+void MainWindow::seekPreview(int value)
+{
+    mediaPlayer_->setPosition(value);
+}
+
+void MainWindow::updatePlaybackPosition(qint64 position)
+{
+    if (!playbackSlider_->isSliderDown()) playbackSlider_->setValue(static_cast<int>(position));
+    playbackTimeLabel_->setText(QString("%1 / %2")
+                                    .arg(formattedTime(position / 1000.0),
+                                         formattedTime(mediaPlayer_->duration() / 1000.0)));
+}
+
+void MainWindow::updatePlaybackDuration(qint64 duration)
+{
+    playbackSlider_->setRange(0, static_cast<int>(duration));
+    updatePlaybackPosition(mediaPlayer_->position());
 }
 
 void MainWindow::loadSettings()
