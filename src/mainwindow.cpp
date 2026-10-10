@@ -1,8 +1,10 @@
 #include "mainwindow.h"
 
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QDir>
 #include <QDoubleSpinBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -11,6 +13,7 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
@@ -18,8 +21,12 @@
 #include <QMimeData>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QPixmap>
+#include <QSettings>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStandardPaths>
+#include <QStorageInfo>
 #include <QSignalBlocker>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -124,7 +131,36 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     audioCheck_ = new QCheckBox("Оставить звук", central);
     form->addRow("Звук", audioCheck_);
+
+    cropCombo_ = new QComboBox(central);
+    cropCombo_->addItems({"Весь кадр", "Своя область"});
+    form->addRow("Кадрирование", cropCombo_);
+    auto *cropRow = new QHBoxLayout;
+    cropX_ = new QSpinBox(central);
+    cropY_ = new QSpinBox(central);
+    cropWidth_ = new QSpinBox(central);
+    cropHeight_ = new QSpinBox(central);
+    for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_}) spin->setRange(0, 16384);
+    cropRow->addWidget(new QLabel("X", central));
+    cropRow->addWidget(cropX_);
+    cropRow->addWidget(new QLabel("Y", central));
+    cropRow->addWidget(cropY_);
+    cropRow->addWidget(new QLabel("Ширина", central));
+    cropRow->addWidget(cropWidth_);
+    cropRow->addWidget(new QLabel("Высота", central));
+    cropRow->addWidget(cropHeight_);
+    form->addRow("Область", cropRow);
     layout->addLayout(form);
+
+    auto *previewRow = new QHBoxLayout;
+    previewLabel_ = new QLabel("Предпросмотр появится здесь", central);
+    previewLabel_->setAlignment(Qt::AlignCenter);
+    previewLabel_->setMinimumHeight(130);
+    previewLabel_->setStyleSheet("QLabel { background: #202124; color: #aaa; border-radius: 6px; }");
+    auto *previewButton = new QPushButton("Обновить предпросмотр", central);
+    previewRow->addWidget(previewLabel_, 1);
+    previewRow->addWidget(previewButton);
+    layout->addLayout(previewRow);
 
     auto [outputRow, outputButton] = fileRow(outputEdit_, "Куда сохранить…", central);
     layout->addLayout(outputRow);
@@ -165,17 +201,23 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(cancelButton_, &QPushButton::clicked, this, &MainWindow::cancelConversion);
     connect(openButton_, &QPushButton::clicked, this, &MainWindow::openResult);
     connect(revealButton_, &QPushButton::clicked, this, &MainWindow::revealResult);
+    connect(previewButton, &QPushButton::clicked, this, &MainWindow::createPreview);
+    connect(cropCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::updateCropControls);
     connect(startRange_, &QSlider::valueChanged, this, &MainWindow::syncTrimFromSliders);
     connect(endRange_, &QSlider::valueChanged, this, &MainWindow::syncTrimFromSliders);
     connect(startSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::syncSlidersFromTrim);
     connect(durationSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::syncSlidersFromTrim);
     connect(&process_, &QProcess::readyReadStandardOutput, this, &MainWindow::readProgress);
     connect(&process_, &QProcess::finished, this, &MainWindow::conversionFinished);
+    updateCropControls();
+    loadSettings();
 }
 
 void MainWindow::chooseInput()
 {
-    const QString path = QFileDialog::getOpenFileName(this, "Выберите видео", {}, "Видео (*.mov *.mp4 *.mkv *.avi *.webm);;Все файлы (*)");
+    QSettings settings;
+    const QString path = QFileDialog::getOpenFileName(this, "Выберите видео", settings.value("lastDirectory").toString(),
+                                                      "Видео (*.mov *.mp4 *.mkv *.avi *.webm);;Все файлы (*)");
     if (!path.isEmpty()) setInputFile(path);
 }
 
@@ -184,12 +226,16 @@ void MainWindow::chooseOutput()
     const QString extension = formatCombo_->currentIndex() == 0 ? "mp4" : "gif";
     const QString path = QFileDialog::getSaveFileName(this, "Сохранить результат", outputEdit_->text(),
                                                       extension.toUpper() + " (*." + extension + ")");
-    if (!path.isEmpty()) outputEdit_->setText(path);
+    if (!path.isEmpty()) {
+        outputEdit_->setText(path);
+        QSettings().setValue("lastDirectory", QFileInfo(path).absolutePath());
+    }
 }
 
 void MainWindow::setInputFile(const QString &path)
 {
     inputEdit_->setText(path);
+    QSettings().setValue("lastDirectory", QFileInfo(path).absolutePath());
     updateOutputForFormat();
     probeInput();
 }
@@ -219,7 +265,7 @@ void MainWindow::probeInput()
     }
 
     QProcess probe;
-    probe.start(ffprobe, {"-v", "quiet", "-print_format", "json", "-show_format", inputEdit_->text()});
+    probe.start(ffprobe, {"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", inputEdit_->text()});
     if (!probe.waitForFinished(5000)) {
         probe.kill();
         mediaInfoLabel_->setText("Не удалось прочитать параметры видео");
@@ -227,6 +273,16 @@ void MainWindow::probeInput()
     }
     const auto document = QJsonDocument::fromJson(probe.readAllStandardOutput());
     sourceDuration_ = document.object().value("format").toObject().value("duration").toString().toDouble();
+    sourceWidth_ = 0;
+    sourceHeight_ = 0;
+    for (const auto &value : document.object().value("streams").toArray()) {
+        const auto stream = value.toObject();
+        if (stream.value("codec_type").toString() == "video") {
+            sourceWidth_ = stream.value("width").toInt();
+            sourceHeight_ = stream.value("height").toInt();
+            break;
+        }
+    }
     if (sourceDuration_ <= 0) {
         mediaInfoLabel_->setText("Длительность видео не определена");
         return;
@@ -242,10 +298,18 @@ void MainWindow::probeInput()
     durationSpin_->setMaximum(sourceDuration_);
     startSpin_->setValue(0);
     durationSpin_->setValue(0);
-    mediaInfoLabel_->setText(QString("Исходник: %1 · %2 МБ")
+    cropX_->setMaximum(qMax(0, sourceWidth_ - 2));
+    cropY_->setMaximum(qMax(0, sourceHeight_ - 2));
+    cropWidth_->setRange(2, qMax(2, sourceWidth_));
+    cropHeight_->setRange(2, qMax(2, sourceHeight_));
+    cropWidth_->setValue(qMax(2, sourceWidth_));
+    cropHeight_->setValue(qMax(2, sourceHeight_));
+    mediaInfoLabel_->setText(QString("Исходник: %1 · %2×%3 · %4 МБ")
                                  .arg(formattedTime(sourceDuration_))
+                                 .arg(sourceWidth_).arg(sourceHeight_)
                                  .arg(sourceSize_ / 1048576.0, 0, 'f', 1));
     syncTrimFromSliders();
+    createPreview();
 }
 
 void MainWindow::updateOutputForFormat()
@@ -334,6 +398,12 @@ QStringList MainWindow::ffmpegArguments() const
     const int width = widthCombo_->currentData().toInt();
     const int fps = fpsCombo_->currentData().toInt();
     QStringList filters;
+    if (cropCombo_->currentIndex() == 1) {
+        const int cropWidth = qMax(2, qMin(cropWidth_->value(), sourceWidth_ - cropX_->value()) & ~1);
+        const int cropHeight = qMax(2, qMin(cropHeight_->value(), sourceHeight_ - cropY_->value()) & ~1);
+        filters << QString("crop=%1:%2:%3:%4")
+                       .arg(cropWidth).arg(cropHeight).arg(cropX_->value()).arg(cropY_->value());
+    }
     if (fps > 0) filters << "fps=" + QString::number(fps);
     if (width > 0) filters << "scale=" + QString::number(width) + ":-2:flags=lanczos";
 
@@ -361,6 +431,21 @@ void MainWindow::startConversion()
     if (outputEdit_->text().isEmpty() || QFileInfo(outputEdit_->text()).absoluteFilePath() == QFileInfo(inputEdit_->text()).absoluteFilePath()) {
         QMessageBox::warning(this, "MovPress", "Укажите другой путь для результата.");
         return;
+    }
+    if (QFileInfo::exists(outputEdit_->text()) &&
+        QMessageBox::question(this, "MovPress", "Файл результата уже существует. Перезаписать его?") != QMessageBox::Yes)
+        return;
+    const QFileInfo outputInfo(outputEdit_->text());
+    if (!QDir(outputInfo.absolutePath()).exists()) {
+        QMessageBox::warning(this, "MovPress", "Папка для результата не существует.");
+        return;
+    }
+    const QStorageInfo storage(outputInfo.absolutePath());
+    if (storage.isValid() && storage.bytesAvailable() < sourceSize_) {
+        const auto answer = QMessageBox::warning(
+            this, "MovPress", "Свободного места меньше размера исходного файла. Продолжить?",
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) return;
     }
     const QString ffmpeg = findTool("ffmpeg");
     if (ffmpeg.isEmpty()) {
@@ -429,6 +514,69 @@ void MainWindow::revealResult()
 {
     if (QFileInfo::exists(outputEdit_->text()))
         QProcess::startDetached("open", {"-R", outputEdit_->text()});
+}
+
+void MainWindow::updateCropControls()
+{
+    const bool enabled = cropCombo_->currentIndex() == 1;
+    for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_}) spin->setEnabled(enabled);
+}
+
+void MainWindow::createPreview()
+{
+    if (!QFileInfo::exists(inputEdit_->text()) || !previewDirectory_.isValid()) return;
+    const QString ffmpeg = findTool("ffmpeg");
+    if (ffmpeg.isEmpty()) return;
+    const QString previewPath = previewDirectory_.filePath("preview.jpg");
+    QStringList args{"-hide_banner", "-loglevel", "error", "-y", "-ss",
+                     QString::number(startSpin_->value()), "-i", inputEdit_->text(), "-frames:v", "1"};
+    QStringList filters;
+    if (cropCombo_->currentIndex() == 1) {
+        const int cropWidth = qMax(2, qMin(cropWidth_->value(), sourceWidth_ - cropX_->value()) & ~1);
+        const int cropHeight = qMax(2, qMin(cropHeight_->value(), sourceHeight_ - cropY_->value()) & ~1);
+        filters << QString("crop=%1:%2:%3:%4")
+                       .arg(cropWidth)
+                       .arg(cropHeight)
+                       .arg(cropX_->value()).arg(cropY_->value());
+    }
+    filters << "scale=480:-2:flags=lanczos";
+    args << "-vf" << filters.join(',') << previewPath;
+    QProcess preview;
+    preview.start(ffmpeg, args);
+    if (preview.waitForFinished(5000) && preview.exitCode() == 0) {
+        const QPixmap image(previewPath);
+        previewLabel_->setPixmap(image.scaled(480, 260, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    } else {
+        previewLabel_->setText("Не удалось создать предпросмотр");
+    }
+}
+
+void MainWindow::loadSettings()
+{
+    QSettings settings;
+    restoreGeometry(settings.value("windowGeometry").toByteArray());
+    widthCombo_->setCurrentIndex(qMax(0, widthCombo_->findData(settings.value("width", 1280).toInt())));
+    fpsCombo_->setCurrentIndex(qMax(0, fpsCombo_->findData(settings.value("fps", 30).toInt())));
+    crfSlider_->setValue(settings.value("crf", 26).toInt());
+    presetCombo_->setCurrentText(settings.value("preset", "slow").toString());
+    audioCheck_->setChecked(settings.value("audio", false).toBool());
+}
+
+void MainWindow::saveSettings() const
+{
+    QSettings settings;
+    settings.setValue("windowGeometry", saveGeometry());
+    settings.setValue("width", widthCombo_->currentData());
+    settings.setValue("fps", fpsCombo_->currentData());
+    settings.setValue("crf", crfSlider_->value());
+    settings.setValue("preset", presetCombo_->currentText());
+    settings.setValue("audio", audioCheck_->isChecked());
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    saveSettings();
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::setRunning(bool running)

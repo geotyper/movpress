@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <QProcess>
+#include <QTemporaryDir>
 
 class QCheckBox;
 class QComboBox;
@@ -11,6 +12,8 @@ class QLineEdit;
 class QProgressBar;
 class QPushButton;
 class QSlider;
+class QSpinBox;
+class QCloseEvent;
 
 class MainWindow final : public QMainWindow
 {
@@ -22,6 +25,7 @@ public:
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void chooseInput();
@@ -36,6 +40,8 @@ private slots:
     void syncSlidersFromTrim();
     void openResult();
     void revealResult();
+    void createPreview();
+    void updateCropControls();
 
 private:
     void setInputFile(const QString &path);
@@ -44,6 +50,8 @@ private:
     QString findTool(const QString &name) const;
     QString formattedTime(double seconds) const;
     QStringList ffmpegArguments() const;
+    void loadSettings();
+    void saveSettings() const;
 
     QLineEdit *inputEdit_{};
     QLineEdit *outputEdit_{};
@@ -58,6 +66,12 @@ private:
     QSlider *endRange_{};
     QLabel *rangeLabel_{};
     QLabel *mediaInfoLabel_{};
+    QLabel *previewLabel_{};
+    QComboBox *cropCombo_{};
+    QSpinBox *cropX_{};
+    QSpinBox *cropY_{};
+    QSpinBox *cropWidth_{};
+    QSpinBox *cropHeight_{};
     QSlider *crfSlider_{};
     QLabel *crfValue_{};
     QCheckBox *audioCheck_{};
@@ -73,4 +87,7 @@ private:
     double targetDuration_{};
     qint64 sourceSize_{};
     bool syncingTrim_{};
+    int sourceWidth_{};
+    int sourceHeight_{};
+    QTemporaryDir previewDirectory_;
 };
