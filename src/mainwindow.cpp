@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "mediautils.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -12,6 +13,7 @@
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -33,6 +35,7 @@
 #include <QStandardPaths>
 #include <QStorageInfo>
 #include <QSignalBlocker>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVideoWidget>
@@ -76,8 +79,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         return std::pair{row, button};
     };
 
-    auto [inputRow, inputButton] = fileRow(inputEdit_, "Выбрать…", central);
-    layout->addLayout(inputRow);
+    auto inputRow = fileRow(inputEdit_, "Выбрать…", central);
+    inputButton_ = inputRow.second;
+    layout->addLayout(inputRow.first);
 
     auto *form = new QFormLayout;
     themeCombo_ = new QComboBox(central);
@@ -174,14 +178,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     cropRow->addWidget(cropHeight_);
     form->addRow("Область", cropRow);
 
-    auto *settingsPane = new QWidget(central);
+    settingsPane_ = new QWidget(central);
     form->setContentsMargins(12, 8, 12, 8);
-    settingsPane->setLayout(form);
+    settingsPane_->setLayout(form);
     auto *settingsScroll = new QScrollArea(central);
     settingsScroll->setWidgetResizable(true);
     settingsScroll->setFrameShape(QFrame::NoFrame);
     settingsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    settingsScroll->setWidget(settingsPane);
+    settingsScroll->setWidget(settingsPane_);
     settingsScroll->setMinimumWidth(430);
 
     videoWidget_ = new QVideoWidget(central);
@@ -216,8 +220,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     contentRow->addWidget(settingsScroll, 2);
     layout->addLayout(contentRow, 1);
 
-    auto [outputRow, outputButton] = fileRow(outputEdit_, "Куда сохранить…", central);
-    layout->addLayout(outputRow);
+    auto outputRow = fileRow(outputEdit_, "Куда сохранить…", central);
+    outputButton_ = outputRow.second;
+    layout->addLayout(outputRow.first);
 
     mediaInfoLabel_ = new QLabel("", central);
     layout->addWidget(mediaInfoLabel_);
@@ -246,8 +251,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     layout->addLayout(actions);
     setCentralWidget(central);
 
-    connect(inputButton, &QPushButton::clicked, this, &MainWindow::chooseInput);
-    connect(outputButton, &QPushButton::clicked, this, &MainWindow::chooseOutput);
+    connect(inputButton_, &QPushButton::clicked, this, &MainWindow::chooseInput);
+    connect(outputButton_, &QPushButton::clicked, this, &MainWindow::chooseOutput);
     connect(formatCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::updateOutputForFormat);
     connect(profileCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::applyProfile);
     connect(themeCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::applyTheme);
@@ -264,12 +269,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         playButton_->setText(state == QMediaPlayer::PlayingState ? "❚❚" : "▶");
     });
     connect(cropCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::updateCropControls);
+    for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_})
+        connect(spin, &QSpinBox::editingFinished, this, &MainWindow::normalizeCropControls);
     connect(startRange_, &QSlider::valueChanged, this, &MainWindow::syncTrimFromSliders);
     connect(endRange_, &QSlider::valueChanged, this, &MainWindow::syncTrimFromSliders);
     connect(startSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::syncSlidersFromTrim);
     connect(durationSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::syncSlidersFromTrim);
     connect(&process_, &QProcess::readyReadStandardOutput, this, &MainWindow::readProgress);
     connect(&process_, &QProcess::finished, this, &MainWindow::conversionFinished);
+    connect(&process_, &QProcess::errorOccurred, this, &MainWindow::conversionError);
+    connect(&probeProcess_, &QProcess::finished, this, &MainWindow::probeFinished);
+    connect(&probeProcess_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart && probedPath_ == inputEdit_->text())
+            mediaInfoLabel_->setText("Не удалось запустить ffprobe");
+    });
     updateCropControls();
     loadSettings();
 }
@@ -300,6 +313,8 @@ void MainWindow::setInputFile(const QString &path)
     QSettings settings(settingsFilePath(), QSettings::IniFormat);
     settings.setValue("lastDirectory", QFileInfo(path).absolutePath());
     previewingOutput_ = false;
+    openButton_->setEnabled(false);
+    revealButton_->setEnabled(false);
     mediaPlayer_->setSource(QUrl::fromLocalFile(path));
     updateOutputForFormat();
     probeInput();
@@ -321,25 +336,45 @@ QString MainWindow::formattedTime(double seconds) const
 
 void MainWindow::probeInput()
 {
+    if (probeProcess_.state() != QProcess::NotRunning) {
+        probeProcess_.kill();
+        probeProcess_.waitForFinished(100);
+    }
     sourceDuration_ = 0;
     sourceSize_ = QFileInfo(inputEdit_->text()).size();
+    sourceWidth_ = 0;
+    sourceHeight_ = 0;
+    startRange_->setEnabled(false);
+    endRange_->setEnabled(false);
+    startRange_->setRange(0, 0);
+    endRange_->setRange(0, 0);
+    rangeLabel_->setText("Анализ видео…");
+    mediaInfoLabel_->setText("Анализ видео…");
+    startButton_->setEnabled(false);
+    probedPath_ = inputEdit_->text();
     const QString ffprobe = findTool("ffprobe");
     if (ffprobe.isEmpty()) {
         mediaInfoLabel_->setText("Не удалось найти ffprobe");
         return;
     }
 
-    QProcess probe;
-    probe.start(ffprobe, {"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", inputEdit_->text()});
-    if (!probe.waitForFinished(5000)) {
-        probe.kill();
+    probeProcess_.start(ffprobe, {"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", probedPath_});
+}
+
+void MainWindow::probeFinished(int exitCode, QProcess::ExitStatus status)
+{
+    if (probedPath_ != inputEdit_->text()) return;
+    if (status != QProcess::NormalExit || exitCode != 0) {
         mediaInfoLabel_->setText("Не удалось прочитать параметры видео");
         return;
     }
-    const auto document = QJsonDocument::fromJson(probe.readAllStandardOutput());
+    QJsonParseError parseError;
+    const auto document = QJsonDocument::fromJson(probeProcess_.readAllStandardOutput(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        mediaInfoLabel_->setText("ffprobe вернул некорректные данные");
+        return;
+    }
     sourceDuration_ = document.object().value("format").toObject().value("duration").toString().toDouble();
-    sourceWidth_ = 0;
-    sourceHeight_ = 0;
     for (const auto &value : document.object().value("streams").toArray()) {
         const auto stream = value.toObject();
         if (stream.value("codec_type").toString() == "video") {
@@ -369,11 +404,13 @@ void MainWindow::probeInput()
     cropHeight_->setRange(2, qMax(2, sourceHeight_));
     cropWidth_->setValue(qMax(2, sourceWidth_));
     cropHeight_->setValue(qMax(2, sourceHeight_));
+    normalizeCropControls();
     mediaInfoLabel_->setText(QString("Исходник: %1 · %2×%3 · %4 МБ")
                                  .arg(formattedTime(sourceDuration_))
                                  .arg(sourceWidth_).arg(sourceHeight_)
                                  .arg(sourceSize_ / 1048576.0, 0, 'f', 1));
     syncTrimFromSliders();
+    startButton_->setEnabled(true);
 }
 
 void MainWindow::updateOutputForFormat()
@@ -426,14 +463,15 @@ void MainWindow::syncTrimFromSliders()
 {
     if (syncingTrim_ || sourceDuration_ <= 0) return;
     syncingTrim_ = true;
-    if (startRange_->value() > endRange_->value())
-        endRange_->setValue(startRange_->value());
-    const double start = startRange_->value();
-    const double end = qMin<double>(endRange_->value(), sourceDuration_);
-    startSpin_->setValue(start);
-    durationSpin_->setValue(end >= sourceDuration_ - 0.5 ? 0 : qMax(0.0, end - start));
+    const auto range = MediaUtils::normalizedTrim(startRange_->value(), endRange_->value(), sourceDuration_,
+                                                  qMin(1.0, sourceDuration_));
+    startRange_->setValue(qRound(range.start));
+    endRange_->setValue(qRound(range.end));
+    startSpin_->setValue(range.start);
+    durationSpin_->setValue(range.end >= sourceDuration_ - 0.05 ? 0 : range.end - range.start);
     rangeLabel_->setText(QString("%1 — %2 · фрагмент %3")
-                             .arg(formattedTime(start), formattedTime(end), formattedTime(end - start)));
+                             .arg(formattedTime(range.start), formattedTime(range.end),
+                                  formattedTime(range.end - range.start)));
     syncingTrim_ = false;
     updatePreviewRange();
 }
@@ -442,14 +480,17 @@ void MainWindow::syncSlidersFromTrim()
 {
     if (syncingTrim_ || sourceDuration_ <= 0) return;
     syncingTrim_ = true;
-    const double start = qMin(startSpin_->value(), sourceDuration_);
-    const double end = durationSpin_->value() <= 0
-                           ? sourceDuration_
-                           : qMin(sourceDuration_, start + durationSpin_->value());
-    startRange_->setValue(qRound(start));
-    endRange_->setValue(qRound(end));
+    const double requestedEnd = durationSpin_->value() <= 0
+                                    ? sourceDuration_
+                                    : startSpin_->value() + durationSpin_->value();
+    const auto range = MediaUtils::normalizedTrim(startSpin_->value(), requestedEnd, sourceDuration_, 0.1);
+    startSpin_->setValue(range.start);
+    if (durationSpin_->value() > 0) durationSpin_->setValue(range.end - range.start);
+    startRange_->setValue(qRound(range.start));
+    endRange_->setValue(qRound(range.end));
     rangeLabel_->setText(QString("%1 — %2 · фрагмент %3")
-                             .arg(formattedTime(start), formattedTime(end), formattedTime(end - start)));
+                             .arg(formattedTime(range.start), formattedTime(range.end),
+                                  formattedTime(range.end - range.start)));
     syncingTrim_ = false;
     updatePreviewRange();
 }
@@ -463,15 +504,10 @@ QStringList MainWindow::ffmpegArguments() const
 
     const int width = widthCombo_->currentData().toInt();
     const int fps = fpsCombo_->currentData().toInt();
-    QStringList filters;
-    if (cropCombo_->currentIndex() == 1) {
-        const int cropWidth = qMax(2, qMin(cropWidth_->value(), sourceWidth_ - cropX_->value()) & ~1);
-        const int cropHeight = qMax(2, qMin(cropHeight_->value(), sourceHeight_ - cropY_->value()) & ~1);
-        filters << QString("crop=%1:%2:%3:%4")
-                       .arg(cropWidth).arg(cropHeight).arg(cropX_->value()).arg(cropY_->value());
-    }
-    if (fps > 0) filters << "fps=" + QString::number(fps);
-    if (width > 0) filters << "scale=" + QString::number(width) + ":-2:flags=lanczos";
+    const auto crop = MediaUtils::normalizedCrop(sourceWidth_, sourceHeight_,
+                                                  {cropX_->value(), cropY_->value(),
+                                                   cropWidth_->value(), cropHeight_->value()});
+    const QStringList filters = MediaUtils::videoFilters(fps, width, cropCombo_->currentIndex() == 1, crop);
 
     if (formatCombo_->currentIndex() == 0) {
         if (!filters.isEmpty()) args << "-vf" << filters.join(',');
@@ -518,6 +554,9 @@ void MainWindow::startConversion()
         QMessageBox::critical(this, "MovPress", "ffmpeg не найден в PATH.");
         return;
     }
+    activeOutputPath_ = outputEdit_->text();
+    activeSourceSize_ = sourceSize_;
+    conversionCancelled_ = false;
     setRunning(true);
     mediaPlayer_->pause();
     progressBuffer_.clear();
@@ -532,8 +571,13 @@ void MainWindow::startConversion()
 
 void MainWindow::cancelConversion()
 {
+    if (process_.state() == QProcess::NotRunning) return;
+    conversionCancelled_ = true;
+    statusLabel_->setText("Отмена…");
     process_.terminate();
-    if (!process_.waitForFinished(1500)) process_.kill();
+    QTimer::singleShot(1500, this, [this] {
+        if (process_.state() != QProcess::NotRunning) process_.kill();
+    });
 }
 
 void MainWindow::readProgress()
@@ -556,39 +600,71 @@ void MainWindow::readProgress()
 void MainWindow::conversionFinished(int exitCode, QProcess::ExitStatus status)
 {
     setRunning(false);
-    if (status == QProcess::NormalExit && exitCode == 0) {
-        const auto size = QFileInfo(outputEdit_->text()).size();
-        const double saved = sourceSize_ > 0 ? (1.0 - static_cast<double>(size) / sourceSize_) * 100.0 : 0.0;
+    if (conversionCancelled_) {
+        QFile::remove(activeOutputPath_);
+        statusLabel_->setText("Конвертация отменена");
+    } else if (status == QProcess::NormalExit && exitCode == 0) {
+        const auto size = QFileInfo(activeOutputPath_).size();
+        const double saved = activeSourceSize_ > 0 ? (1.0 - static_cast<double>(size) / activeSourceSize_) * 100.0 : 0.0;
         statusLabel_->setText(QString("Готово: %1 МБ → %2 МБ · экономия %3%")
-                                  .arg(sourceSize_ / 1048576.0, 0, 'f', 1)
+                                  .arg(activeSourceSize_ / 1048576.0, 0, 'f', 1)
                                   .arg(size / 1048576.0, 0, 'f', 1)
                                   .arg(saved, 0, 'f', 0));
         openButton_->setEnabled(true);
         revealButton_->setEnabled(true);
         previewingOutput_ = true;
-        mediaPlayer_->setSource(QUrl::fromLocalFile(outputEdit_->text()));
+        mediaPlayer_->setSource(QUrl::fromLocalFile(activeOutputPath_));
     } else {
         statusLabel_->setText("Ошибка конвертации");
         QMessageBox::critical(this, "MovPress", QString::fromUtf8(process_.readAllStandardError()).right(3000));
     }
+    if (closeAfterProcess_) QTimer::singleShot(0, this, &QWidget::close);
+}
+
+void MainWindow::conversionError(QProcess::ProcessError error)
+{
+    if (error != QProcess::FailedToStart) return;
+    setRunning(false);
+    statusLabel_->setText("Не удалось запустить ffmpeg");
+    QMessageBox::critical(this, "MovPress", "ffmpeg найден, но процесс не удалось запустить.");
+    if (closeAfterProcess_) QTimer::singleShot(0, this, &QWidget::close);
 }
 
 void MainWindow::openResult()
 {
-    if (QFileInfo::exists(outputEdit_->text()))
-        QDesktopServices::openUrl(QUrl::fromLocalFile(outputEdit_->text()));
+    if (QFileInfo::exists(activeOutputPath_))
+        QDesktopServices::openUrl(QUrl::fromLocalFile(activeOutputPath_));
 }
 
 void MainWindow::revealResult()
 {
-    if (QFileInfo::exists(outputEdit_->text()))
-        QProcess::startDetached("open", {"-R", outputEdit_->text()});
+    if (QFileInfo::exists(activeOutputPath_))
+        QProcess::startDetached("open", {"-R", activeOutputPath_});
 }
 
 void MainWindow::updateCropControls()
 {
     const bool enabled = cropCombo_->currentIndex() == 1;
     for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_}) spin->setEnabled(enabled);
+    if (enabled) normalizeCropControls();
+}
+
+void MainWindow::normalizeCropControls()
+{
+    if (sourceWidth_ < 2 || sourceHeight_ < 2) return;
+    const auto crop = MediaUtils::normalizedCrop(sourceWidth_, sourceHeight_,
+                                                  {cropX_->value(), cropY_->value(),
+                                                   cropWidth_->value(), cropHeight_->value()});
+    const QSignalBlocker blockX(cropX_);
+    const QSignalBlocker blockY(cropY_);
+    const QSignalBlocker blockWidth(cropWidth_);
+    const QSignalBlocker blockHeight(cropHeight_);
+    cropX_->setValue(crop.x);
+    cropY_->setValue(crop.y);
+    cropWidth_->setMaximum(qMax(2, (sourceWidth_ - crop.x) & ~1));
+    cropHeight_->setMaximum(qMax(2, (sourceHeight_ - crop.y) & ~1));
+    cropWidth_->setValue(crop.width);
+    cropHeight_->setValue(crop.height);
 }
 
 void MainWindow::applyTheme(int index)
@@ -786,15 +862,42 @@ void MainWindow::saveSettings() const
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (process_.state() != QProcess::NotRunning) {
+        const auto answer = QMessageBox::question(this, "MovPress", "Конвертация ещё выполняется. Отменить её и закрыть приложение?",
+                                                   QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            event->ignore();
+            return;
+        }
+        closeAfterProcess_ = true;
+        cancelConversion();
+        event->ignore();
+        return;
+    }
     saveSettings();
     QMainWindow::closeEvent(event);
 }
 
 void MainWindow::setRunning(bool running)
 {
+    inputEdit_->setEnabled(!running);
+    outputEdit_->setEnabled(!running);
+    inputButton_->setEnabled(!running);
+    outputButton_->setEnabled(!running);
+    settingsPane_->setEnabled(!running);
+    playButton_->setEnabled(!running);
+    playbackSlider_->setEnabled(!running);
+    setAcceptDrops(!running);
     startButton_->setEnabled(!running);
     cancelButton_->setEnabled(running);
     progress_->setVisible(running);
+    if (!running) {
+        const bool mp4 = formatCombo_->currentIndex() == 0;
+        crfSlider_->setEnabled(mp4);
+        presetCombo_->setEnabled(mp4);
+        audioCheck_->setEnabled(mp4);
+        updateCropControls();
+    }
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
@@ -804,6 +907,7 @@ void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 
 void MainWindow::dropEvent(QDropEvent *event)
 {
+    if (process_.state() != QProcess::NotRunning) return;
     const auto urls = event->mimeData()->urls();
     if (!urls.isEmpty() && urls.first().isLocalFile()) setInputFile(urls.first().toLocalFile());
 }

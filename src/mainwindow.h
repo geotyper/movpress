@@ -37,6 +37,8 @@ private slots:
     void cancelConversion();
     void readProgress();
     void conversionFinished(int exitCode, QProcess::ExitStatus status);
+    void conversionError(QProcess::ProcessError error);
+    void probeFinished(int exitCode, QProcess::ExitStatus status);
     void applyProfile(int index);
     void syncTrimFromSliders();
     void syncSlidersFromTrim();
@@ -47,6 +49,7 @@ private slots:
     void updatePlaybackPosition(qint64 position);
     void updatePlaybackDuration(qint64 duration);
     void updateCropControls();
+    void normalizeCropControls();
     void applyTheme(int index);
 
 private:
@@ -91,10 +94,14 @@ private:
     QProgressBar *progress_{};
     QLabel *statusLabel_{};
     QPushButton *startButton_{};
+    QPushButton *inputButton_{};
+    QPushButton *outputButton_{};
     QPushButton *cancelButton_{};
     QPushButton *openButton_{};
     QPushButton *revealButton_{};
+    QWidget *settingsPane_{};
     QProcess process_;
+    QProcess probeProcess_;
     QByteArray progressBuffer_;
     double sourceDuration_{};
     double targetDuration_{};
@@ -104,4 +111,9 @@ private:
     bool resettingPlayback_{};
     int sourceWidth_{};
     int sourceHeight_{};
+    QString probedPath_;
+    QString activeOutputPath_;
+    qint64 activeSourceSize_{};
+    bool conversionCancelled_{};
+    bool closeAfterProcess_{};
 };

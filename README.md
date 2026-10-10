@@ -59,6 +59,16 @@ cmake --build build
 open build/MovPress.app
 ```
 
+## Tests
+
+The project includes small Qt Test checks for trim-range normalization, crop bounds, pixel alignment, and FFmpeg video-filter construction:
+
+```bash
+cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
 ## Usage
 
 1. Drop a video onto the application or select it using the file dialog.

@@ -12,6 +12,8 @@ qt_add_executable(MovPress MACOSX_BUNDLE
     src/main.cpp
     src/mainwindow.cpp
     src/mainwindow.h
+    src/mediautils.cpp
+    src/mediautils.h
 )
 
 target_link_libraries(MovPress PRIVATE Qt6::Widgets Qt6::Multimedia Qt6::MultimediaWidgets)
@@ -27,3 +29,16 @@ install(TARGETS MovPress
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+    qt_add_executable(MovPressTests
+        tests/test_mediautils.cpp
+        src/mediautils.cpp
+        src/mediautils.h
+    )
+    target_include_directories(MovPressTests PRIVATE src)
+    target_link_libraries(MovPressTests PRIVATE Qt6::Test)
+    add_test(NAME MovPressTests COMMAND MovPressTests)
+endif()
