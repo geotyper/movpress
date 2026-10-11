@@ -837,6 +837,12 @@ void MainWindow::applyTheme(int index)
                 background-color: #1e1f22;
                 border: none;
             }
+            QLabel, QCheckBox {
+                color: #f0f0f0;
+            }
+            QLabel:disabled, QCheckBox:disabled {
+                color: #a7a7a7;
+            }
             QLineEdit, QComboBox, QAbstractSpinBox {
                 color: #f5f5f5;
                 background-color: #3f4147;
@@ -884,6 +890,17 @@ void MainWindow::applyTheme(int index)
                 color: #ffffff;
                 background-color: #45474d;
                 border: 1px solid #777a82;
+            }
+            QProgressBar {
+                color: #ffffff;
+                background-color: #34363a;
+                border: 1px solid #55585f;
+                border-radius: 5px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #0a84ff;
+                border-radius: 4px;
             }
             QScrollBar:vertical {
                 background: #292b2f;
