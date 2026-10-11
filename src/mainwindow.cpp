@@ -38,6 +38,7 @@
 #include <QStandardPaths>
 #include <QStorageInfo>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -57,7 +58,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     setWindowTitle("MovPress");
     resize(1100, 700);
-    setMinimumSize(820, 480);
+    setMinimumSize(980, 480);
     setAcceptDrops(true);
 
     auto *central = new QWidget(this);
@@ -88,6 +89,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     auto *form = new QFormLayout;
     form->setVerticalSpacing(8);
+    form->setHorizontalSpacing(18);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     themeCombo_ = new QComboBox(central);
     themeCombo_->addItems({"Системная", "Светлая", "Тёмная"});
     form->addRow("Тема", themeCombo_);
@@ -136,6 +140,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     frameRow->addWidget(new QLabel("Последний кадр", framePage));
     frameRow->addWidget(endFrameSpin_);
     trimStack_->addWidget(framePage);
+    trimStack_->setMinimumWidth(380);
     form->addRow("Фрагмент", trimStack_);
 
     auto *rangeBox = new QVBoxLayout;
@@ -204,6 +209,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     cropRow->addWidget(cropHeight_, 1, 3);
     form->addRow("Область", cropRow);
 
+    auto configureCombo = [](QComboBox *combo, int minimumWidth) {
+        combo->setMinimumWidth(minimumWidth);
+        combo->setMinimumHeight(30);
+        combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        combo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
+        combo->setMaxVisibleItems(12);
+    };
+    configureCombo(themeCombo_, 190);
+    configureCombo(profileCombo_, 240);
+    configureCombo(formatCombo_, 190);
+    configureCombo(rangeModeCombo_, 190);
+    configureCombo(widthCombo_, 190);
+    configureCombo(fpsCombo_, 190);
+    configureCombo(presetCombo_, 190);
+    configureCombo(cropCombo_, 190);
+    for (auto *spin : {startSpin_, durationSpin_}) spin->setMinimumWidth(100);
+    for (auto *spin : {startFrameSpin_, endFrameSpin_}) spin->setMinimumWidth(100);
+
     settingsPane_ = new QWidget(central);
     settingsPane_->setObjectName("settingsPane");
     form->setContentsMargins(12, 8, 12, 8);
@@ -217,7 +240,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     settingsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     settingsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     settingsScroll->setWidget(settingsPane_);
-    settingsScroll->setMinimumWidth(390);
+    settingsScroll->setMinimumWidth(510);
 
     videoWidget_ = new QVideoWidget(central);
     videoWidget_->setMinimumSize(300, 180);
@@ -848,9 +871,14 @@ void MainWindow::applyTheme(int index)
                 background-color: #3f4147;
                 border: 1px solid #686b72;
                 border-radius: 6px;
-                padding: 4px 7px;
                 selection-background-color: #0a84ff;
                 selection-color: #ffffff;
+            }
+            QLineEdit, QAbstractSpinBox {
+                padding: 4px 8px;
+            }
+            QComboBox {
+                padding: 4px 30px 4px 10px;
             }
             QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
                 border: 1px solid #4ca0ff;
