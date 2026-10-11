@@ -54,6 +54,7 @@ private slots:
     void updateCropControls();
     void normalizeCropControls();
     void applyTheme(int index);
+    void changeLanguage(int index);
 
 private:
     void setInputFile(const QString &path);
@@ -65,12 +66,14 @@ private:
     void loadSettings();
     void saveSettings() const;
     void updatePreviewRange(bool seekToStart = true);
+    QString uiText(const char *english, const char *russian) const;
 
     QLineEdit *inputEdit_{};
     QLineEdit *outputEdit_{};
     QComboBox *formatCombo_{};
     QComboBox *profileCombo_{};
     QComboBox *themeCombo_{};
+    QComboBox *languageCombo_{};
     QComboBox *widthCombo_{};
     QComboBox *fpsCombo_{};
     QComboBox *presetCombo_{};
@@ -125,4 +128,5 @@ private:
     qint64 activeSourceSize_{};
     bool conversionCancelled_{};
     bool closeAfterProcess_{};
+    bool russian_{};
 };

@@ -25,6 +25,7 @@ MovPress is a lightweight macOS application for compressing screen recordings an
 - Conversion cancellation
 - Open the result or reveal it in Finder
 - Persistent settings and last-used directory
+- English interface by default, with Russian available from the Language menu
 - System, light, and dark appearance modes
 - Warnings before overwriting files or when disk space is low
 
@@ -77,6 +78,8 @@ ctest --test-dir build --output-on-failure
 3. Choose a ready-made profile or adjust the compression settings manually.
 4. Select the output path and start the conversion.
 5. Preview the converted file, open it, or reveal it in Finder.
+
+The application starts in English by default. Select `Language` at the top of the settings panel to switch between English and Russian. MovPress restarts automatically to apply the new language.
 
 ## Configuration
 
