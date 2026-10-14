@@ -2,7 +2,7 @@
 
 [Русская версия](README_RUS.md)
 
-MovPress is a lightweight macOS application for compressing screen recordings and creating optimized GIFs. It provides a Qt 6 desktop interface and uses the system-installed `ffmpeg` and `ffprobe` tools for media processing.
+MovPress is a lightweight macOS application for compressing screen recordings and creating optimized GIFs. It provides a Qt 6 desktop interface and uses `ffmpeg` and `ffprobe` for media processing. A macOS build copies those tools into the app when they are available on the build machine.
 
 ![MovPress application window](docs/screenshot.png)
 
@@ -16,8 +16,9 @@ MovPress is a lightweight macOS application for compressing screen recordings an
 - Preview playback limited to the selected clip range
 - Custom start time and duration
 - Configurable resolution, frame rate, CRF, and encoding preset
+- Hardware H.264 encoders when the bundled or installed `ffmpeg` provides them
 - Optional audio preservation
-- Custom video cropping
+- Custom video cropping, including a rectangle dragged on the preview
 - Ready-to-use profiles for YouTube, Habr, Telegram, and maximum compression
 - Drag-and-drop video selection
 - Accurate conversion progress reported by `ffmpeg`
@@ -35,7 +36,7 @@ MovPress is a lightweight macOS application for compressing screen recordings an
 - CMake 3.21 or newer
 - A C++20 compiler
 - Qt 6.5 or newer with Widgets, Multimedia, and MultimediaWidgets
-- `ffmpeg` and `ffprobe` available in `PATH`, `/opt/homebrew/bin`, or `/usr/local/bin`
+- `ffmpeg` and `ffprobe` at build time so they can be copied into the app, or on `PATH`, `/opt/homebrew/bin`, or `/usr/local/bin` at runtime
 
 ## Build
 

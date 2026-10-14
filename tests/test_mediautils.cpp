@@ -16,6 +16,8 @@ private slots:
     void parsesFrameRates();
     void convertsInclusiveFrameRange();
     void buildsInclusiveFrameFilter();
+    void mapsHardwareQuality();
+    void buildsEncoderArguments();
 };
 
 void MediaUtilsTest::keepsValidTrim()
@@ -86,6 +88,28 @@ void MediaUtilsTest::buildsInclusiveFrameFilter()
 {
     QCOMPARE(MediaUtils::frameTrimFilter(30, 59),
              QString("trim=start_frame=30:end_frame=60,setpts=PTS-STARTPTS"));
+}
+
+void MediaUtilsTest::mapsHardwareQuality()
+{
+    QCOMPARE(MediaUtils::videoToolboxQuality(18), 84);
+    QCOMPARE(MediaUtils::videoToolboxQuality(26), 68);
+    QCOMPARE(MediaUtils::videoToolboxQuality(32), 56);
+    QCOMPARE(MediaUtils::vaapiUploadFilters(), QStringList({"format=nv12", "hwupload"}));
+}
+
+void MediaUtilsTest::buildsEncoderArguments()
+{
+    const auto software = MediaUtils::encoderArguments("libx264", 23, "slow");
+    QCOMPARE(software, QStringList({"-c:v", "libx264", "-crf", "23", "-preset", "slow", "-pix_fmt", "yuv420p"}));
+
+    const auto hardware = MediaUtils::encoderArguments("h264_videotoolbox", 26, "slow");
+    QCOMPARE(hardware.at(1), "h264_videotoolbox");
+    QCOMPARE(hardware.at(3), QString::number(MediaUtils::videoToolboxQuality(26)));
+    QVERIFY(!hardware.contains("slow"));
+
+    const auto fallback = MediaUtils::encoderArguments("missing", 23, "medium");
+    QCOMPARE(fallback.at(1), "libx264");
 }
 
 QTEST_APPLESS_MAIN(MediaUtilsTest)

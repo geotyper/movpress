@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "cropoverlay.h"
 #include "mediautils.h"
 
 #include <QApplication>
@@ -15,6 +16,8 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QFormLayout>
+#include <QGraphicsScene>
+#include <QGraphicsVideoItem>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -29,6 +32,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QMediaPlayer>
+#include <QPainter>
 #include <QPalette>
 #include <QSettings>
 #include <QScrollArea>
@@ -42,7 +46,6 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
-#include <QVideoWidget>
 #include <QWidget>
 
 namespace {
@@ -56,7 +59,7 @@ QString settingsFilePath()
 QStringList applicationSettingKeys()
 {
     return {
-        "windowGeometry", "width", "fps", "crf", "preset", "audio", "theme", "language", "lastDirectory"
+        "windowGeometry", "width", "fps", "crf", "preset", "encoder", "audio", "theme", "language", "lastDirectory"
     };
 }
 
@@ -72,6 +75,14 @@ void migrateSettingsFile()
     for (auto it = migrated.cbegin(); it != migrated.cend(); ++it)
         settings.setValue(it.key(), it.value());
     settings.sync();
+}
+
+QString vaapiDevice()
+{
+    const QDir dri("/dev/dri");
+    const QStringList nodes = dri.entryList({"renderD*"}, QDir::System);
+    if (!nodes.isEmpty()) return dri.absoluteFilePath(nodes.first());
+    return QString("/dev/dri/renderD128");
 }
 }
 
@@ -204,10 +215,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     fpsCombo_->setCurrentIndex(2);
     form->addRow(uiText("Frames per second", "Кадров в секунду"), fpsCombo_);
 
+    encoderCombo_ = new QComboBox(central);
+    encoderCombo_->addItem(uiText("Software (H.264)", "Программный (H.264)"), "libx264");
+    encoderCombo_->setToolTip(uiText("Hardware encoders appear when ffmpeg reports them. The quality slider is mapped onto each encoder.",
+                                     "Аппаратные кодировщики появляются, если их сообщает ffmpeg. Ползунок качества пересчитывается для каждого."));
+    form->addRow(uiText("Encoder", "Кодировщик"), encoderCombo_);
+
     auto *crfRow = new QHBoxLayout;
     crfSlider_ = new QSlider(Qt::Horizontal, central);
     crfSlider_->setRange(18, 32);
     crfSlider_->setValue(26);
+    crfSlider_->setToolTip(uiText("Lower is better. Software encoding uses this CRF directly.",
+                                  "Меньше — лучше. Программный кодировщик использует это значение CRF напрямую."));
     crfValue_ = new QLabel("26", central);
     crfRow->addWidget(crfSlider_);
     crfRow->addWidget(crfValue_);
@@ -223,6 +242,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     cropCombo_ = new QComboBox(central);
     cropCombo_->addItems({uiText("Full frame", "Весь кадр"), uiText("Custom area", "Своя область")});
+    cropCombo_->setToolTip(uiText("Custom area can be dragged on the preview.",
+                                  "Свою область можно перетащить прямо на превью."));
     form->addRow(uiText("Cropping", "Кадрирование"), cropCombo_);
     auto *cropRow = new QGridLayout;
     cropX_ = new QSpinBox(central);
@@ -257,6 +278,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     configureCombo(rangeModeCombo_, 190);
     configureCombo(widthCombo_, 190);
     configureCombo(fpsCombo_, 190);
+    configureCombo(encoderCombo_, 240);
     configureCombo(presetCombo_, 190);
     configureCombo(cropCombo_, 190);
     for (auto *spin : {startSpin_, durationSpin_}) spin->setMinimumWidth(120);
@@ -277,14 +299,28 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     settingsScroll->setWidget(settingsPane_);
     settingsScroll->setMinimumWidth(510);
 
-    videoWidget_ = new QVideoWidget(central);
-    videoWidget_->setMinimumSize(300, 180);
-    videoWidget_->setStyleSheet("background: #202124; border-radius: 6px;");
+    videoScene_ = new QGraphicsScene(this);
+    videoItem_ = new QGraphicsVideoItem;
+    videoItem_->setAspectRatioMode(Qt::KeepAspectRatio);
+    videoScene_->addItem(videoItem_);
+    cropItem_ = new CropOverlayItem(videoItem_);
+    cropItem_->setVisible(false);
+    videoView_ = new PreviewView(central);
+    videoView_->setScene(videoScene_);
+    videoView_->setMinimumSize(300, 180);
+    videoView_->setFrameShape(QFrame::NoFrame);
+    videoView_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    videoView_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    videoView_->setAlignment(Qt::AlignCenter);
+    videoView_->setBackgroundBrush(QColor("#202124"));
+    videoView_->setRenderHint(QPainter::Antialiasing, true);
+    videoView_->setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
+    videoView_->setDragMode(QGraphicsView::NoDrag);
     mediaPlayer_ = new QMediaPlayer(this);
     audioOutput_ = new QAudioOutput(this);
     audioOutput_->setVolume(0.7f);
     mediaPlayer_->setAudioOutput(audioOutput_);
-    mediaPlayer_->setVideoOutput(videoWidget_);
+    mediaPlayer_->setVideoOutput(videoItem_);
 
     auto *playbackRow = new QHBoxLayout;
     playButton_ = new QPushButton("▶", central);
@@ -300,7 +336,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     auto *previewLayout = new QVBoxLayout(previewPane);
     previewLayout->setContentsMargins(0, 0, 8, 0);
     previewLayout->addWidget(new QLabel(uiText("Preview", "Предпросмотр"), previewPane));
-    previewLayout->addWidget(videoWidget_, 1);
+    previewLayout->addWidget(videoView_, 1);
     previewLayout->addLayout(playbackRow);
 
     auto *contentRow = new QHBoxLayout;
@@ -359,8 +395,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         playButton_->setText(state == QMediaPlayer::PlayingState ? "❚❚" : "▶");
     });
     connect(cropCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::updateCropControls);
-    for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_})
+    for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_}) {
         connect(spin, &QSpinBox::editingFinished, this, &MainWindow::normalizeCropControls);
+        connect(spin, &QSpinBox::valueChanged, this, &MainWindow::syncCropOverlay);
+    }
+    connect(cropItem_, &CropOverlayItem::cropEdited, this, &MainWindow::applyCropFromOverlay);
+    connect(videoView_, &PreviewView::resized, this, &MainWindow::fitPreview);
+    connect(videoItem_, &QGraphicsVideoItem::nativeSizeChanged, this, [this](const QSizeF &) { fitPreview(); });
+    connect(encoderCombo_, &QComboBox::currentIndexChanged, this, [this](int) {
+        preferredEncoder_ = encoderCombo_->currentData().toString();
+        updateEncoderControls();
+    });
+    connect(&encoderProbe_, &QProcess::finished, this, &MainWindow::encoderProbeFinished);
     connect(startRange_, &QSlider::valueChanged, this, &MainWindow::syncTrimFromSliders);
     connect(endRange_, &QSlider::valueChanged, this, &MainWindow::syncTrimFromSliders);
     connect(startSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::syncSlidersFromTrim);
@@ -378,6 +424,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     });
     updateCropControls();
     loadSettings();
+    detectEncoders();
 }
 
 void MainWindow::chooseInput()
@@ -408,6 +455,7 @@ void MainWindow::setInputFile(const QString &path)
     QSettings settings(settingsFilePath(), QSettings::IniFormat);
     settings.setValue("lastDirectory", QFileInfo(path).absolutePath());
     previewingOutput_ = false;
+    syncCropOverlay();
     openButton_->setEnabled(false);
     revealButton_->setEnabled(false);
     mediaPlayer_->setSource(QUrl::fromLocalFile(path));
@@ -417,6 +465,13 @@ void MainWindow::setInputFile(const QString &path)
 
 QString MainWindow::findTool(const QString &name) const
 {
+#if defined(Q_OS_WIN)
+    const QString bundledName = name + ".exe";
+#else
+    const QString bundledName = name;
+#endif
+    const QString bundled = QDir(QCoreApplication::applicationDirPath()).filePath(bundledName);
+    if (QFileInfo(bundled).isExecutable()) return bundled;
     QString path = QStandardPaths::findExecutable(name);
     for (const QString &prefix : {QString("/opt/homebrew/bin/"), QString("/usr/local/bin/")})
         if (path.isEmpty() && QFileInfo::exists(prefix + name)) path = prefix + name;
@@ -520,19 +575,18 @@ void MainWindow::probeFinished(int exitCode, QProcess::ExitStatus status)
                                  .arg(sourceFps_, 0, 'f', 2)
                                  .arg(sourceSize_ / 1048576.0, 0, 'f', 1));
     updateRangeMode();
+    syncCropOverlay();
     startButton_->setEnabled(true);
 }
 
 void MainWindow::updateOutputForFormat()
 {
-    if (inputEdit_->text().isEmpty()) return;
-    QFileInfo info(inputEdit_->text());
-    const QString extension = formatCombo_->currentIndex() == 0 ? "mp4" : "gif";
-    outputEdit_->setText(info.dir().filePath(info.completeBaseName() + "-compressed." + extension));
-    const bool mp4 = formatCombo_->currentIndex() == 0;
-    crfSlider_->setEnabled(mp4);
-    presetCombo_->setEnabled(mp4);
-    audioCheck_->setEnabled(mp4);
+    if (!inputEdit_->text().isEmpty()) {
+        QFileInfo info(inputEdit_->text());
+        const QString extension = formatCombo_->currentIndex() == 0 ? "mp4" : "gif";
+        outputEdit_->setText(info.dir().filePath(info.completeBaseName() + "-compressed." + extension));
+    }
+    updateEncoderControls();
 }
 
 void MainWindow::applyProfile(int index)
@@ -698,7 +752,10 @@ MediaUtils::TrimRange MainWindow::selectedTrimRange() const
 
 QStringList MainWindow::ffmpegArguments() const
 {
+    const QString encoder = encoderCombo_->currentData().toString();
     QStringList args{"-hide_banner", "-y"};
+    if (formatCombo_->currentIndex() == 0 && encoder == "h264_vaapi")
+        args << "-vaapi_device" << vaapiDevice();
     const bool frameTrim = rangeModeCombo_->currentIndex() == 1 && sourceFps_ > 0;
     if (!frameTrim && startSpin_->value() > 0) args << "-ss" << QString::number(startSpin_->value());
     if (!frameTrim && durationSpin_->value() > 0) args << "-t" << QString::number(durationSpin_->value());
@@ -719,9 +776,9 @@ QStringList MainWindow::ffmpegArguments() const
                                  && sourceWidth_ % 2 == 0 && sourceHeight_ % 2 == 0;
         if (width <= 0 && !cropping && !sourceEven)
             filters << "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+        if (encoder == "h264_vaapi") filters << MediaUtils::vaapiUploadFilters();
         if (!filters.isEmpty()) args << "-vf" << filters.join(',');
-        args << "-c:v" << "libx264" << "-crf" << QString::number(crfSlider_->value())
-             << "-preset" << presetCombo_->currentText() << "-pix_fmt" << "yuv420p";
+        args << MediaUtils::encoderArguments(encoder, crfSlider_->value(), presetCombo_->currentText());
         if (!audioCheck_->isChecked()) args << "-an";
         else {
             if (frameTrim) {
@@ -884,6 +941,7 @@ void MainWindow::conversionFinished(int exitCode, QProcess::ExitStatus status)
             openButton_->setEnabled(true);
             revealButton_->setEnabled(true);
             previewingOutput_ = true;
+            syncCropOverlay();
             mediaPlayer_->setSource(QUrl::fromLocalFile(activeOutputPath_));
         }
     } else {
@@ -932,6 +990,7 @@ void MainWindow::updateCropControls()
     const bool enabled = cropCombo_->currentIndex() == 1;
     for (auto *spin : {cropX_, cropY_, cropWidth_, cropHeight_}) spin->setEnabled(enabled);
     if (enabled) normalizeCropControls();
+    else syncCropOverlay();
 }
 
 void MainWindow::normalizeCropControls()
@@ -950,6 +1009,7 @@ void MainWindow::normalizeCropControls()
     cropHeight_->setMaximum(qMax(2, (sourceHeight_ - crop.y) & ~1));
     cropWidth_->setValue(crop.width);
     cropHeight_->setValue(crop.height);
+    syncCropOverlay();
 }
 
 void MainWindow::applyTheme(int index)
@@ -1197,7 +1257,10 @@ void MainWindow::loadSettings()
     fpsCombo_->setCurrentIndex(qMax(0, fpsCombo_->findData(settings.value("fps", 30).toInt())));
     crfSlider_->setValue(settings.value("crf", 26).toInt());
     presetCombo_->setCurrentText(settings.value("preset", "slow").toString());
+    preferredEncoder_ = settings.value("encoder", "libx264").toString();
+    selectEncoder(preferredEncoder_);
     audioCheck_->setChecked(settings.value("audio", false).toBool());
+    updateEncoderControls();
 }
 
 void MainWindow::saveSettings() const
@@ -1208,6 +1271,7 @@ void MainWindow::saveSettings() const
     settings.setValue("fps", fpsCombo_->currentData());
     settings.setValue("crf", crfSlider_->value());
     settings.setValue("preset", presetCombo_->currentText());
+    settings.setValue("encoder", encoderCombo_->currentData().toString());
     settings.setValue("audio", audioCheck_->isChecked());
     settings.setValue("theme", themeCombo_->currentIndex());
     settings.setValue("language", russian_ ? "ru" : "en");
@@ -1243,17 +1307,120 @@ void MainWindow::setRunning(bool running)
     settingsPane_->setEnabled(!running);
     playButton_->setEnabled(!running);
     playbackSlider_->setEnabled(!running);
+    cropItem_->setEnabled(!running);
     setAcceptDrops(!running);
     startButton_->setEnabled(!running);
     cancelButton_->setEnabled(running);
     progress_->setVisible(running);
     if (!running) {
-        const bool mp4 = formatCombo_->currentIndex() == 0;
-        crfSlider_->setEnabled(mp4);
-        presetCombo_->setEnabled(mp4);
-        audioCheck_->setEnabled(mp4);
+        updateEncoderControls();
         updateCropControls();
     }
+}
+
+void MainWindow::updateEncoderControls()
+{
+    const bool mp4 = formatCombo_->currentIndex() == 0;
+    const QString encoder = encoderCombo_->currentData().toString();
+    const bool software = encoder.isEmpty() || encoder == "libx264";
+    encoderCombo_->setEnabled(mp4);
+    crfSlider_->setEnabled(mp4);
+    presetCombo_->setEnabled(mp4 && software);
+    audioCheck_->setEnabled(mp4);
+}
+
+void MainWindow::detectEncoders()
+{
+    if (encoderProbe_.state() != QProcess::NotRunning) return;
+    const QString ffmpeg = findTool("ffmpeg");
+    if (ffmpeg.isEmpty()) return;
+    encoderProbe_.start(ffmpeg, {"-hide_banner", "-encoders"});
+}
+
+void MainWindow::encoderProbeFinished(int exitCode, QProcess::ExitStatus status)
+{
+    if (status != QProcess::NormalExit || exitCode != 0) return;
+    const QString report = QString::fromUtf8(encoderProbe_.readAllStandardOutput());
+    const struct { const char *id; const char *english; const char *russian; } known[] = {
+        {"h264_videotoolbox", "Apple VideoToolbox", "Apple VideoToolbox"},
+        {"h264_nvenc", "NVIDIA NVENC", "NVIDIA NVENC"},
+        {"h264_qsv", "Intel Quick Sync", "Intel Quick Sync"},
+        {"h264_amf", "AMD AMF", "AMD AMF"},
+        {"h264_vaapi", "VAAPI", "VAAPI"},
+    };
+    QSignalBlocker block(encoderCombo_);
+    while (encoderCombo_->count() > 1) encoderCombo_->removeItem(1);
+    for (const auto &encoder : known) {
+        if (report.contains(QString::fromLatin1(encoder.id)))
+            encoderCombo_->addItem(uiText(encoder.english, encoder.russian), encoder.id);
+    }
+    block.unblock();
+    selectEncoder(preferredEncoder_);
+    updateEncoderControls();
+}
+
+void MainWindow::selectEncoder(const QString &id)
+{
+    const int index = encoderCombo_->findData(id);
+    if (index >= 0) encoderCombo_->setCurrentIndex(index);
+}
+
+void MainWindow::fitPreview()
+{
+    const QSizeF native = videoItem_->nativeSize();
+    if (native.width() < 2 || native.height() < 2) return;
+    videoItem_->setPos(0, 0);
+    videoItem_->setSize(native);
+    videoScene_->setSceneRect(videoItem_->sceneBoundingRect());
+    videoView_->fitInView(videoScene_->sceneRect(), Qt::KeepAspectRatio);
+    const qreal scale = videoView_->transform().m11();
+    if (scale > 0) cropItem_->setHandleSceneSize(10.0 / scale);
+    syncCropOverlay();
+}
+
+QRect MainWindow::mapCropToSource(const QRect &rect) const
+{
+    const QSizeF native = videoItem_->nativeSize();
+    if (native.width() < 2 || native.height() < 2 || sourceWidth_ < 2 || sourceHeight_ < 2)
+        return rect;
+    return QRect(qRound(rect.x() * sourceWidth_ / native.width()),
+                 qRound(rect.y() * sourceHeight_ / native.height()),
+                 qMax(2, qRound(rect.width() * sourceWidth_ / native.width())),
+                 qMax(2, qRound(rect.height() * sourceHeight_ / native.height())));
+}
+
+QRect MainWindow::mapCropToPreview(const QRect &rect) const
+{
+    const QSizeF native = videoItem_->nativeSize();
+    if (native.width() < 2 || native.height() < 2 || sourceWidth_ < 2 || sourceHeight_ < 2)
+        return rect;
+    return QRect(qRound(rect.x() * native.width() / sourceWidth_),
+                 qRound(rect.y() * native.height() / sourceHeight_),
+                 qMax(2, qRound(rect.width() * native.width() / sourceWidth_)),
+                 qMax(2, qRound(rect.height() * native.height() / sourceHeight_)));
+}
+
+void MainWindow::syncCropOverlay()
+{
+    if (syncingCrop_) return;
+    const QSizeF native = videoItem_->nativeSize();
+    cropItem_->setVideoSize(native.toSize());
+    cropItem_->setCrop(mapCropToPreview(QRect(cropX_->value(), cropY_->value(), cropWidth_->value(), cropHeight_->value())));
+    cropItem_->setVisible(cropCombo_->currentIndex() == 1 && !previewingOutput_ && native.width() >= 2 && sourceWidth_ >= 2);
+}
+
+void MainWindow::applyCropFromOverlay(const QRect &rect)
+{
+    const QRect sourceRect = mapCropToSource(rect);
+    const auto crop = MediaUtils::normalizedCrop(sourceWidth_, sourceHeight_,
+                                                  {sourceRect.x(), sourceRect.y(), sourceRect.width(), sourceRect.height()});
+    syncingCrop_ = true;
+    cropX_->setValue(crop.x);
+    cropY_->setValue(crop.y);
+    cropWidth_->setValue(crop.width);
+    cropHeight_->setValue(crop.height);
+    syncingCrop_ = false;
+    cropItem_->setCrop(mapCropToPreview(QRect(crop.x, crop.y, crop.width, crop.height)));
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)

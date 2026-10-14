@@ -22,5 +22,8 @@ QStringList videoFilters(int fps, int width, bool cropEnabled, CropRect crop);
 double parseFrameRate(const QString &value);
 TrimRange trimFromFrames(int startFrame, int endFrame, double fps, double totalDuration);
 QString frameTrimFilter(int startFrame, int endFrame);
+int videoToolboxQuality(int crf);
+QStringList encoderArguments(const QString &encoderId, int crf, const QString &preset);
+QStringList vaapiUploadFilters();
 
 }

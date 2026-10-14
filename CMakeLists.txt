@@ -14,6 +14,8 @@ qt_add_executable(MovPress MACOSX_BUNDLE
     src/mainwindow.h
     src/mediautils.cpp
     src/mediautils.h
+    src/cropoverlay.cpp
+    src/cropoverlay.h
 )
 
 target_link_libraries(MovPress PRIVATE Qt6::Widgets Qt6::Multimedia Qt6::MultimediaWidgets)
@@ -29,6 +31,26 @@ install(TARGETS MovPress
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
+
+if(APPLE)
+    find_program(FFMPEG_EXECUTABLE ffmpeg)
+    find_program(FFPROBE_EXECUTABLE ffprobe)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(NOT Python3_EXECUTABLE)
+        find_program(Python3_EXECUTABLE python3)
+    endif()
+    if(FFMPEG_EXECUTABLE AND FFPROBE_EXECUTABLE AND Python3_EXECUTABLE)
+        add_custom_command(TARGET MovPress POST_BUILD
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/cmake/bundle_ffmpeg.py"
+                    "$<TARGET_FILE_DIR:MovPress>"
+                    "${FFMPEG_EXECUTABLE}"
+                    "${FFPROBE_EXECUTABLE}"
+            COMMENT "Copying ffmpeg and ffprobe into the app bundle"
+            VERBATIM)
+    else()
+        message(WARNING "ffmpeg, ffprobe, or python3 was not found. The bundle will look for them on PATH at runtime.")
+    endif()
+endif()
 
 include(CTest)
 if(BUILD_TESTING)

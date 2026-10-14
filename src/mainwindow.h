@@ -4,6 +4,7 @@
 
 #include <QMainWindow>
 #include <QProcess>
+#include <QRect>
 
 class QCheckBox;
 class QComboBox;
@@ -16,9 +17,12 @@ class QSlider;
 class QSpinBox;
 class QCloseEvent;
 class QAudioOutput;
+class QGraphicsScene;
+class QGraphicsVideoItem;
 class QMediaPlayer;
-class QVideoWidget;
 class QStackedWidget;
+class CropOverlayItem;
+class PreviewView;
 
 class MainWindow final : public QMainWindow
 {
@@ -55,8 +59,10 @@ private slots:
     void updatePlaybackDuration(qint64 duration);
     void updateCropControls();
     void normalizeCropControls();
+    void applyCropFromOverlay(const QRect &rect);
     void applyTheme(int index);
     void changeLanguage(int index);
+    void encoderProbeFinished(int exitCode, QProcess::ExitStatus status);
 
 private:
     void setInputFile(const QString &path);
@@ -70,6 +76,13 @@ private:
     void loadSettings();
     void saveSettings() const;
     void updatePreviewRange(bool seekToStart = true);
+    void updateEncoderControls();
+    void detectEncoders();
+    void selectEncoder(const QString &id);
+    void fitPreview();
+    void syncCropOverlay();
+    QRect mapCropToSource(const QRect &rect) const;
+    QRect mapCropToPreview(const QRect &rect) const;
     QString uiText(const char *english, const char *russian) const;
 
     QLineEdit *inputEdit_{};
@@ -80,6 +93,7 @@ private:
     QComboBox *languageCombo_{};
     QComboBox *widthCombo_{};
     QComboBox *fpsCombo_{};
+    QComboBox *encoderCombo_{};
     QComboBox *presetCombo_{};
     QDoubleSpinBox *startSpin_{};
     QDoubleSpinBox *durationSpin_{};
@@ -96,7 +110,10 @@ private:
     QSlider *playbackSlider_{};
     QMediaPlayer *mediaPlayer_{};
     QAudioOutput *audioOutput_{};
-    QVideoWidget *videoWidget_{};
+    PreviewView *videoView_{};
+    QGraphicsScene *videoScene_{};
+    QGraphicsVideoItem *videoItem_{};
+    CropOverlayItem *cropItem_{};
     QComboBox *cropCombo_{};
     QSpinBox *cropX_{};
     QSpinBox *cropY_{};
@@ -116,11 +133,14 @@ private:
     QWidget *settingsPane_{};
     QProcess process_;
     QProcess probeProcess_;
+    QProcess encoderProbe_;
+    QString preferredEncoder_{"libx264"};
     QByteArray progressBuffer_;
     double sourceDuration_{};
     double targetDuration_{};
     qint64 sourceSize_{};
     bool syncingTrim_{};
+    bool syncingCrop_{};
     bool previewingOutput_{};
     bool resettingPlayback_{};
     int sourceWidth_{};

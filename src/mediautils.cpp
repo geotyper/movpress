@@ -70,4 +70,41 @@ QString frameTrimFilter(int startFrame, int endFrame)
         .arg(startFrame).arg(endFrame + 1);
 }
 
+int videoToolboxQuality(int crf)
+{
+    const int clamped = qBound(18, crf, 32);
+    return qBound(1, 120 - clamped * 2, 100);
+}
+
+QStringList encoderArguments(const QString &encoderId, int crf, const QString &preset)
+{
+    const int quality = qBound(0, crf, 51);
+    const QString id = encoderId.isEmpty() ? QString("libx264") : encoderId;
+    if (id == "h264_videotoolbox") {
+        return {"-c:v", "h264_videotoolbox", "-q:v", QString::number(videoToolboxQuality(quality)),
+                "-profile:v", "high", "-pix_fmt", "yuv420p"};
+    }
+    if (id == "h264_nvenc") {
+        return {"-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", QString::number(quality),
+                "-b:v", "0", "-pix_fmt", "yuv420p"};
+    }
+    if (id == "h264_qsv") {
+        return {"-c:v", "h264_qsv", "-global_quality", QString::number(quality), "-pix_fmt", "nv12"};
+    }
+    if (id == "h264_amf") {
+        return {"-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp",
+                "-qp_i", QString::number(quality), "-qp_p", QString::number(quality)};
+    }
+    if (id == "h264_vaapi")
+        return {"-c:v", "h264_vaapi", "-qp", QString::number(quality)};
+
+    const QString speed = preset.isEmpty() ? QString("medium") : preset;
+    return {"-c:v", "libx264", "-crf", QString::number(quality), "-preset", speed, "-pix_fmt", "yuv420p"};
+}
+
+QStringList vaapiUploadFilters()
+{
+    return {"format=nv12", "hwupload"};
+}
+
 }
