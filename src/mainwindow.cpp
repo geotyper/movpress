@@ -736,7 +736,8 @@ QStringList MainWindow::ffmpegArguments() const
         const QString base = filters.isEmpty() ? "null" : filters.join(',');
         args << "-filter_complex" << base + ",split[a][b];[a]palettegen[p];[b][p]paletteuse" << "-an";
     }
-    args << "-progress" << "pipe:1" << "-nostats" << activeTempPath_;
+    const QString format = formatCombo_->currentIndex() == 0 ? "mp4" : "gif";
+    args << "-progress" << "pipe:1" << "-nostats" << "-f" << format << activeTempPath_;
     return args;
 }
 
@@ -773,9 +774,13 @@ void MainWindow::startConversion()
         return;
     }
     activeOutputPath_ = outputInfo.absoluteFilePath();
-    activeTempPath_ = outputInfo.dir().filePath(outputInfo.fileName() + ".movpress-partial");
-    if (QFileInfo(activeTempPath_).absoluteFilePath() == QFileInfo(inputEdit_->text()).absoluteFilePath())
-        activeTempPath_ += ".tmp";
+    const QString extension = formatCombo_->currentIndex() == 0 ? "mp4" : "gif";
+    activeTempPath_ = outputInfo.dir().filePath(
+        outputInfo.completeBaseName() + ".movpress-partial." + extension);
+    if (QFileInfo(activeTempPath_).absoluteFilePath() == QFileInfo(inputEdit_->text()).absoluteFilePath()) {
+        activeTempPath_ = outputInfo.dir().filePath(
+            outputInfo.completeBaseName() + ".movpress-partial.tmp." + extension);
+    }
     QFile::remove(activeTempPath_);
     openButton_->setEnabled(false);
     revealButton_->setEnabled(false);
