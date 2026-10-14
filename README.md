@@ -6,7 +6,11 @@
 
 Unzip the archive and open `MovPress.app`. `ffmpeg` and `ffprobe` are included. If macOS says the app is damaged, run `xattr -dr com.apple.quarantine MovPress.app` in that folder and open it again.
 
-MovPress is a lightweight macOS application for compressing screen recordings and creating optimized GIFs. It provides a Qt 6 desktop interface and uses `ffmpeg` and `ffprobe` for media processing. A macOS build copies those tools into the app when they are available on the build machine.
+**[Windows amd64 build](https://github.com/geotyper/movpress/actions?query=branch%3Afeature%2Fwindows-amd64)**
+
+Unzip the archive and run `MovPress.exe`. Qt, `ffmpeg`, and `ffprobe` are in the same folder.
+
+MovPress is a lightweight application for compressing screen recordings and creating optimized GIFs. It provides a Qt 6 desktop interface and uses `ffmpeg` and `ffprobe` for media processing. macOS and Windows packages include those tools.
 
 ![MovPress application window](docs/screenshot.png)
 
@@ -28,7 +32,7 @@ MovPress is a lightweight macOS application for compressing screen recordings an
 - Accurate conversion progress reported by `ffmpeg`
 - Before-and-after file size comparison and space-saving percentage
 - Conversion cancellation
-- Open the result or reveal it in Finder
+- Open the result or reveal it in Finder or Explorer
 - Persistent settings and last-used directory
 - English interface by default, with Russian available from the Language menu
 - System, light, and dark appearance modes
@@ -36,7 +40,7 @@ MovPress is a lightweight macOS application for compressing screen recordings an
 
 ## Requirements
 
-- macOS
+- macOS or Windows
 - CMake 3.21 or newer
 - A C++20 compiler
 - Qt 6.5 or newer with Widgets, Multimedia, and MultimediaWidgets
@@ -82,7 +86,7 @@ ctest --test-dir build --output-on-failure
 2. Preview the video and select the required fragment.
 3. Choose a ready-made profile or adjust the compression settings manually.
 4. Select the output path and start the conversion.
-5. Preview the converted file, open it, or reveal it in Finder.
+5. Preview the converted file, open it, or reveal it in Finder or Explorer.
 
 The application starts in English by default. Select `Language` at the top of the settings panel to switch between English and Russian. MovPress restarts automatically to apply the new language.
 

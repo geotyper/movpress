@@ -363,7 +363,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     actions->addStretch();
     cancelButton_ = new QPushButton(uiText("Cancel", "Отмена"), central);
     openButton_ = new QPushButton(uiText("Open file", "Открыть файл"), central);
+#if defined(Q_OS_WIN)
+    revealButton_ = new QPushButton(uiText("Show in Explorer", "Показать в проводнике"), central);
+#elif defined(Q_OS_MACOS)
     revealButton_ = new QPushButton(uiText("Reveal in Finder", "Показать в Finder"), central);
+#else
+    revealButton_ = new QPushButton(uiText("Show in folder", "Показать в папке"), central);
+#endif
     startButton_ = new QPushButton(uiText("Compress video", "Сжать видео"), central);
     cancelButton_->setEnabled(false);
     openButton_->setEnabled(false);
@@ -473,8 +479,10 @@ QString MainWindow::findTool(const QString &name) const
     const QString bundled = QDir(QCoreApplication::applicationDirPath()).filePath(bundledName);
     if (QFileInfo(bundled).isExecutable()) return bundled;
     QString path = QStandardPaths::findExecutable(name);
+#if !defined(Q_OS_WIN)
     for (const QString &prefix : {QString("/opt/homebrew/bin/"), QString("/usr/local/bin/")})
         if (path.isEmpty() && QFileInfo::exists(prefix + name)) path = prefix + name;
+#endif
     return path;
 }
 
@@ -981,8 +989,17 @@ void MainWindow::openResult()
 
 void MainWindow::revealResult()
 {
-    if (QFileInfo::exists(activeOutputPath_))
-        QProcess::startDetached("open", {"-R", activeOutputPath_});
+    if (!QFileInfo::exists(activeOutputPath_)) return;
+#if defined(Q_OS_WIN)
+    QProcess explorer;
+    explorer.setProgram("explorer.exe");
+    explorer.setNativeArguments("/select,\"" + QDir::toNativeSeparators(activeOutputPath_) + "\"");
+    explorer.startDetached();
+#elif defined(Q_OS_MACOS)
+    QProcess::startDetached("open", {"-R", activeOutputPath_});
+#else
+    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(activeOutputPath_).absolutePath()));
+#endif
 }
 
 void MainWindow::updateCropControls()

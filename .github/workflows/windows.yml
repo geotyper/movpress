@@ -1,0 +1,73 @@
+name: Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/windows-amd64
+
+jobs:
+  amd64:
+    name: Windows amd64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade aqtinstall
+          python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 -O C:\Qt -m qtmultimedia qtshadertools
+          $deploy = Get-ChildItem -Path C:\Qt -Recurse -Filter windeployqt.exe | Select-Object -First 1
+          if (-not $deploy) { throw "windeployqt was not installed" }
+          "QT_ROOT=$($deploy.Directory.Parent.FullName)" >> $env:GITHUB_ENV
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build and test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_ROOT"
+          cmake --build build --parallel
+          $env:PATH = "$env:QT_ROOT\bin;" + $env:PATH
+          ctest --test-dir build --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path (Get-Location) "dist\MovPress"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item build\MovPress.exe $dist
+          & "$env:QT_ROOT\bin\windeployqt.exe" --release --compiler-runtime --no-translations "$dist\MovPress.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+          $zip = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          curl.exe -L --fail -o $zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          $expanded = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          Expand-Archive -Path $zip -DestinationPath $expanded -Force
+          $ffmpeg = Get-ChildItem $expanded -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $ffmpeg) { throw "ffmpeg.exe was not in the archive" }
+          Copy-Item $ffmpeg.FullName $dist
+          Copy-Item (Join-Path $ffmpeg.DirectoryName "ffprobe.exe") $dist
+          foreach ($name in @("MovPress.exe", "ffmpeg.exe", "ffprobe.exe", "platforms\qwindows.dll")) {
+            if (-not (Test-Path (Join-Path $dist $name))) { throw "Missing $name" }
+          }
+          $headers = dumpbin /nologo /headers (Join-Path $dist "MovPress.exe") | Out-String
+          if ($headers -notmatch "8664 machine \(x64\)") { throw "MovPress.exe is not amd64" }
+          $ff = dumpbin /nologo /headers (Join-Path $dist "ffmpeg.exe") | Out-String
+          if ($ff -notmatch "8664 machine \(x64\)") { throw "ffmpeg.exe is not amd64" }
+          & (Join-Path $dist "ffmpeg.exe") -version
+          if ($LASTEXITCODE -ne 0) { throw "bundled ffmpeg did not start" }
+          & (Join-Path $dist "ffprobe.exe") -version
+          if ($LASTEXITCODE -ne 0) { throw "bundled ffprobe did not start" }
+          Compress-Archive -Path $dist -DestinationPath "MovPress-windows-amd64.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MovPress-windows-amd64
+          path: MovPress-windows-amd64.zip
+          if-no-files-found: error
