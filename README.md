@@ -6,7 +6,7 @@
 
 Unzip the archive and open `MovPress.app`. `ffmpeg` and `ffprobe` are included. If macOS says the app is damaged, run `xattr -dr com.apple.quarantine MovPress.app` in that folder and open it again.
 
-**[Windows amd64 build](https://github.com/geotyper/movpress/actions?query=branch%3Afeature%2Fwindows-amd64)**
+**[Download for Windows (amd64)](https://github.com/geotyper/movpress/releases/latest/download/MovPress-windows-amd64.zip)**
 
 Unzip the archive and run `MovPress.exe`. Qt, `ffmpeg`, and `ffprobe` are in the same folder.
 

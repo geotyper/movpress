@@ -1,0 +1,66 @@
+name: Publish Windows archive
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-windows.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    name: Add the Windows zip to the release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the built archive
+        uses: actions/download-artifact@v4
+        with:
+          name: MovPress-windows-amd64
+          run-id: 38568351357
+          github-token: ${{ github.token }}
+          path: dist
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          find dist -type f -print
+          archive="$(find dist -name 'MovPress-windows-amd64.zip' -print -quit)"
+          test -n "$archive"
+          gh release upload v0.1.0 "$archive" --clobber
+          notes="$(mktemp)"
+          cat > "$notes" <<'EOF'
+          ### macOS (Apple Silicon)
+
+          Unzip `MovPress-v0.1.0-macos-arm64.zip` and open `MovPress.app`. `ffmpeg` and `ffprobe` are already inside.
+
+          If macOS says the app is damaged or from an unidentified developer, run this in the folder that contains the app, then open it again:
+
+          ```
+          xattr -dr com.apple.quarantine MovPress.app
+          ```
+
+          ### Windows (amd64)
+
+          Unzip `MovPress-windows-amd64.zip` and run `MovPress.exe`. Qt, `ffmpeg`, and `ffprobe` are in the same folder.
+
+          ### macOS (Apple Silicon)
+
+          Распакуйте `MovPress-v0.1.0-macos-arm64.zip` и откройте `MovPress.app`. `ffmpeg` и `ffprobe` уже лежат внутри.
+
+          Если macOS пишет, что приложение повреждено или от неизвестного разработчика, выполните команду в папке с приложением и откройте его снова:
+
+          ```
+          xattr -dr com.apple.quarantine MovPress.app
+          ```
+
+          ### Windows (amd64)
+
+          Распакуйте `MovPress-windows-amd64.zip` и запустите `MovPress.exe`. Qt, `ffmpeg` и `ffprobe` лежат в той же папке.
+          EOF
+          gh release edit v0.1.0 --notes-file "$notes"
