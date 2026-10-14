@@ -29,10 +29,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          find dist -type f -print
-          archive="$(find dist -name 'MovPress-windows-amd64.zip' -print -quit)"
-          test -n "$archive"
-          gh release upload v0.1.0 "$archive" --clobber
+          find dist -print
+          if [ -f dist/MovPress-windows-amd64.zip ]; then
+            archive="dist/MovPress-windows-amd64.zip"
+          else
+            archive="${RUNNER_TEMP}/MovPress-windows-amd64.zip"
+            (cd dist && zip -r "$archive" .)
+          fi
+          test -s "$archive"
+          gh release upload v0.1.0 "$archive" --clobber --repo "$GITHUB_REPOSITORY"
           notes="$(mktemp)"
           cat > "$notes" <<'EOF'
           ### macOS (Apple Silicon)
@@ -63,4 +68,4 @@ jobs:
 
           Распакуйте `MovPress-windows-amd64.zip` и запустите `MovPress.exe`. Qt, `ffmpeg` и `ffprobe` лежат в той же папке.
           EOF
-          gh release edit v0.1.0 --notes-file "$notes"
+          gh release edit v0.1.0 --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
