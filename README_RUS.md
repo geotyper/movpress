@@ -2,6 +2,10 @@
 
 [English version](README.md)
 
+**[Скачать для macOS (Apple Silicon)](https://github.com/geotyper/movpress/releases/latest)**
+
+Распакуйте архив и откройте `MovPress.app`. `ffmpeg` и `ffprobe` уже внутри. Если macOS пишет, что приложение повреждено, выполните в этой папке `xattr -dr com.apple.quarantine MovPress.app` и откройте его снова.
+
 MovPress — небольшое приложение для macOS, предназначенное для сжатия записей экрана и создания оптимизированных GIF. Интерфейс построен на Qt 6, а обработка видео выполняется `ffmpeg` и `ffprobe`. Сборка для macOS копирует эти инструменты внутрь приложения, если они найдены на машине сборки.
 
 ![Окно приложения MovPress](docs/screenshot.png)

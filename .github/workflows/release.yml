@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_ENV_HINTS: "1"
+
+jobs:
+  macos:
+    name: macOS Apple Silicon
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt and ffmpeg
+        run: |
+          set -euo pipefail
+          brew install aqtinstall ffmpeg
+          aqt install-qt mac desktop 6.12.0 clang_64 -O "$RUNNER_TEMP/qt" -m qtmultimedia qtshadertools
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          deploy="$(find "$RUNNER_TEMP/qt" -path '*/bin/macdeployqt' -print -quit)"
+          test -n "$deploy"
+          qt_root="$(dirname "$(dirname "$deploy")")"
+          echo "Using Qt at $qt_root"
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_PREFIX_PATH="$qt_root"
+          cmake --build build --parallel
+
+      - name: Bundle Qt and ffmpeg
+        run: |
+          set -euo pipefail
+          app="build/MovPress.app"
+          deploy="$(find "$RUNNER_TEMP/qt" -path '*/bin/macdeployqt' -print -quit)"
+          rm -f "$app/Contents/MacOS/ffmpeg" "$app/Contents/MacOS/ffprobe"
+          rm -rf "$app/Contents/Frameworks"
+          "$deploy" "$app" -verbose=2
+          python3 cmake/bundle_ffmpeg.py \
+            "$app/Contents/MacOS" \
+            "$(command -v ffmpeg)" \
+            "$(command -v ffprobe)"
+          xattr -cr "$app"
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          file "$app/Contents/MacOS/MovPress" | grep -q arm64
+          if otool -L "$app/Contents/MacOS/MovPress" | grep -E '/opt/homebrew|/Users/'; then
+            echo "MovPress still links outside the app bundle"
+            exit 1
+          fi
+          if otool -L "$app/Contents/MacOS/ffmpeg" | grep -E '/opt/homebrew|/usr/local/'; then
+            echo "ffmpeg still links outside the app bundle"
+            exit 1
+          fi
+          "$app/Contents/MacOS/ffmpeg" -version
+          "$app/Contents/MacOS/ffprobe" -version
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="MovPress-${GITHUB_REF_NAME}-macos-arm64.zip"
+          ditto -c -k --keepParent build/MovPress.app "$archive"
+          notes_file="$RUNNER_TEMP/notes.md"
+          cat > "$notes_file" <<'EOF'
+          ### macOS (Apple Silicon)
+
+          Unzip the archive and open `MovPress.app`. `ffmpeg` and `ffprobe` are already inside.
+
+          If macOS says the app is damaged or from an unidentified developer, run this in the folder that contains the app, then open it again:
+
+          ```
+          xattr -dr com.apple.quarantine MovPress.app
+          ```
+
+          ### macOS (Apple Silicon)
+
+          Распакуйте архив и откройте `MovPress.app`. `ffmpeg` и `ffprobe` уже лежат внутри.
+
+          Если macOS пишет, что приложение повреждено или от неизвестного разработчика, выполните команду в папке с приложением и откройте его снова:
+
+          ```
+          xattr -dr com.apple.quarantine MovPress.app
+          ```
+          EOF
+          gh release create "$GITHUB_REF_NAME" "$archive" \
+            --title "MovPress ${GITHUB_REF_NAME#v}" \
+            --notes-file "$notes_file"
