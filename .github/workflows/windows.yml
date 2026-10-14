@@ -17,11 +17,37 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python -m pip install --upgrade aqtinstall
-          python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 -O C:\Qt -m qtmultimedia qtshadertools
-          $deploy = Get-ChildItem -Path C:\Qt -Recurse -Filter windeployqt.exe | Select-Object -First 1
-          if (-not $deploy) { throw "windeployqt was not installed" }
-          "QT_ROOT=$($deploy.Directory.Parent.FullName)" >> $env:GITHUB_ENV
+          $qtRoot = "C:\Qt\6.12.0\msvc2022_64"
+          New-Item -ItemType Directory -Force -Path $qtRoot | Out-Null
+          $repo = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6120/qt6_6120_msvc2022_64"
+          $stamp = "6.12.0-0-202609280346"
+          $basePkg = "qt.qt6.6120.win64_msvc2022_64"
+          $archives = @(
+            "$basePkg/${stamp}qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+            "$basePkg/${stamp}qtsvg-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+            "$basePkg/${stamp}qttools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+            "$basePkg/${stamp}qtdeclarative-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+            "$basePkg/${stamp}d3dcompiler_47-x64.7z",
+            "qt.qt6.6120.addons.qtmultimedia.win64_msvc2022_64/${stamp}qtmultimedia-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+            "qt.qt6.6120.addons.qtshadertools.win64_msvc2022_64/${stamp}qtshadertools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z"
+          )
+          $seven = "C:\Program Files\7-Zip\7z.exe"
+          if (-not (Test-Path $seven)) {
+            $cmd = Get-Command 7z -ErrorAction SilentlyContinue
+            if (-not $cmd) { throw "7z was not found" }
+            $seven = $cmd.Source
+          }
+          foreach ($archive in $archives) {
+            $name = Split-Path $archive -Leaf
+            $out = Join-Path $env:RUNNER_TEMP $name
+            Write-Host "Downloading $name"
+            curl.exe -L --fail --retry 5 --retry-all-errors -o $out "$repo/$archive"
+            & $seven x $out "-o$qtRoot" -y
+            if ($LASTEXITCODE -ne 0) { throw "Could not extract $name" }
+            Remove-Item $out
+          }
+          if (-not (Test-Path "$qtRoot\bin\windeployqt.exe")) { throw "windeployqt was not installed" }
+          "QT_ROOT=$qtRoot" >> $env:GITHUB_ENV
 
       - uses: ilammy/msvc-dev-cmd@v1
         with:
