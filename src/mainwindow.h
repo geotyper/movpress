@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mediautils.h"
+
 #include <QMainWindow>
 #include <QProcess>
 
@@ -62,7 +64,9 @@ private:
     void setRunning(bool running);
     QString findTool(const QString &name) const;
     QString formattedTime(double seconds) const;
+    MediaUtils::TrimRange selectedTrimRange() const;
     QStringList ffmpegArguments() const;
+    bool publishConvertedFile();
     void loadSettings();
     void saveSettings() const;
     void updatePreviewRange(bool seekToStart = true);
@@ -125,6 +129,7 @@ private:
     int totalFrames_{};
     QString probedPath_;
     QString activeOutputPath_;
+    QString activeTempPath_;
     qint64 activeSourceSize_{};
     bool conversionCancelled_{};
     bool closeAfterProcess_{};

@@ -20,7 +20,7 @@ MovPress is a lightweight macOS application for compressing screen recordings an
 - Custom video cropping
 - Ready-to-use profiles for YouTube, Habr, Telegram, and maximum compression
 - Drag-and-drop video selection
-- Accurate conversion progress reported by `ffprobe`
+- Accurate conversion progress reported by `ffmpeg`
 - Before-and-after file size comparison and space-saving percentage
 - Conversion cancellation
 - Open the result or reveal it in Finder

@@ -52,10 +52,32 @@ QString settingsFilePath()
     QDir().mkpath(directory);
     return QDir(directory).filePath("movpress.ini");
 }
+
+QStringList applicationSettingKeys()
+{
+    return {
+        "windowGeometry", "width", "fps", "crf", "preset", "audio", "theme", "language", "lastDirectory"
+    };
+}
+
+void migrateSettingsFile()
+{
+    if (QFileInfo::exists(settingsFilePath())) return;
+    QSettings legacySettings;
+    QMap<QString, QVariant> migrated;
+    for (const QString &key : applicationSettingKeys())
+        if (legacySettings.contains(key)) migrated.insert(key, legacySettings.value(key));
+    if (migrated.isEmpty()) return;
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    for (auto it = migrated.cbegin(); it != migrated.cend(); ++it)
+        settings.setValue(it.key(), it.value());
+    settings.sync();
+}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
+    migrateSettingsFile();
     QSettings startupSettings(settingsFilePath(), QSettings::IniFormat);
     russian_ = startupSettings.value("language", "en").toString() == "ru";
     setWindowTitle("MovPress");
@@ -128,7 +150,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     durationSpin_ = new QDoubleSpinBox(central);
     for (auto *spin : {startSpin_, durationSpin_}) {
         spin->setRange(0.0, 86400.0);
-        spin->setDecimals(1);
+        spin->setDecimals(3);
+        spin->setSingleStep(0.1);
         spin->setSuffix(uiText(" s", " с"));
     }
     durationSpin_->setSpecialValueText(uiText("to the end", "до конца"));
@@ -236,7 +259,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     configureCombo(fpsCombo_, 190);
     configureCombo(presetCombo_, 190);
     configureCombo(cropCombo_, 190);
-    for (auto *spin : {startSpin_, durationSpin_}) spin->setMinimumWidth(100);
+    for (auto *spin : {startSpin_, durationSpin_}) spin->setMinimumWidth(120);
     for (auto *spin : {startFrameSpin_, endFrameSpin_}) spin->setMinimumWidth(100);
 
     settingsPane_ = new QWidget(central);
@@ -559,7 +582,7 @@ void MainWindow::syncTrimFromSliders()
         endFrameSpin_->setValue(endFrame);
         const auto range = MediaUtils::trimFromFrames(startFrame, endFrame, sourceFps_, sourceDuration_);
         startSpin_->setValue(range.start);
-        durationSpin_->setValue(endFrame >= totalFrames_ - 1 ? 0 : range.end - range.start);
+        durationSpin_->setValue(range.end >= sourceDuration_ - 0.0001 ? 0 : range.end - range.start);
         rangeLabel_->setText(uiText("frames %1–%2 · %3 frames", "кадры %1 — %2 · %3 кадр.")
                                  .arg(startFrame).arg(endFrame).arg(endFrame - startFrame + 1));
         syncingTrim_ = false;
@@ -568,7 +591,7 @@ void MainWindow::syncTrimFromSliders()
     }
     syncingTrim_ = true;
     const auto range = MediaUtils::normalizedTrim(startRange_->value(), endRange_->value(), sourceDuration_,
-                                                  qMin(1.0, sourceDuration_));
+                                                  qMin(0.1, sourceDuration_));
     startRange_->setValue(qRound(range.start));
     endRange_->setValue(qRound(range.end));
     startSpin_->setValue(range.start);
@@ -628,12 +651,21 @@ void MainWindow::syncTrimFromFrames()
     endFrameSpin_->setValue(endFrame);
     const auto range = MediaUtils::trimFromFrames(startFrame, endFrame, sourceFps_, sourceDuration_);
     startSpin_->setValue(range.start);
-    durationSpin_->setValue(endFrame >= totalFrames_ - 1 ? 0 : range.end - range.start);
+    durationSpin_->setValue(range.end >= sourceDuration_ - 0.0001 ? 0 : range.end - range.start);
     if (rangeModeCombo_->currentIndex() == 1) {
         startRange_->setValue(startFrame);
         endRange_->setValue(endFrame);
         rangeLabel_->setText(uiText("frames %1–%2 · %3 frames", "кадры %1 — %2 · %3 кадр.")
                                  .arg(startFrame).arg(endFrame).arg(endFrame - startFrame + 1));
+    } else {
+        const int maximum = qMax(1, qCeil(sourceDuration_));
+        startRange_->setRange(0, maximum);
+        endRange_->setRange(0, maximum);
+        startRange_->setValue(qRound(range.start));
+        endRange_->setValue(qRound(range.end));
+        rangeLabel_->setText(uiText("%1–%2 · clip %3", "%1 — %2 · фрагмент %3")
+                                 .arg(formattedTime(range.start), formattedTime(range.end),
+                                      formattedTime(range.end - range.start)));
     }
     syncingTrim_ = false;
     updatePreviewRange();
@@ -646,7 +678,22 @@ void MainWindow::updateRangeMode()
         return;
     }
     trimStack_->setCurrentIndex(rangeModeCombo_->currentIndex());
-    syncSlidersFromTrim();
+    if (rangeModeCombo_->currentIndex() == 0 && sourceFps_ > 0 && totalFrames_ > 0)
+        syncTrimFromFrames();
+    else
+        syncSlidersFromTrim();
+}
+
+MediaUtils::TrimRange MainWindow::selectedTrimRange() const
+{
+    if (rangeModeCombo_->currentIndex() == 1 && sourceFps_ > 0 && sourceDuration_ > 0)
+        return MediaUtils::trimFromFrames(startFrameSpin_->value(), endFrameSpin_->value(),
+                                           sourceFps_, sourceDuration_);
+
+    const double start = qMax(0.0, startSpin_->value());
+    double end = durationSpin_->value() > 0 ? start + durationSpin_->value() : sourceDuration_;
+    if (sourceDuration_ > 0) end = qMin(end, sourceDuration_);
+    return {start, qMax(start, end)};
 }
 
 QStringList MainWindow::ffmpegArguments() const
@@ -667,17 +714,20 @@ QStringList MainWindow::ffmpegArguments() const
         filters.prepend(MediaUtils::frameTrimFilter(startFrameSpin_->value(), endFrameSpin_->value()));
 
     if (formatCombo_->currentIndex() == 0) {
+        const bool cropping = cropCombo_->currentIndex() == 1 && crop.width > 0 && crop.height > 0;
+        const bool sourceEven = sourceWidth_ > 0 && sourceHeight_ > 0
+                                 && sourceWidth_ % 2 == 0 && sourceHeight_ % 2 == 0;
+        if (width <= 0 && !cropping && !sourceEven)
+            filters << "scale=trunc(iw/2)*2:trunc(ih/2)*2";
         if (!filters.isEmpty()) args << "-vf" << filters.join(',');
         args << "-c:v" << "libx264" << "-crf" << QString::number(crfSlider_->value())
              << "-preset" << presetCombo_->currentText() << "-pix_fmt" << "yuv420p";
         if (!audioCheck_->isChecked()) args << "-an";
         else {
             if (frameTrim) {
-                const double end = durationSpin_->value() > 0
-                                       ? startSpin_->value() + durationSpin_->value()
-                                       : sourceDuration_;
+                const auto range = selectedTrimRange();
                 args << "-af" << QString("atrim=start=%1:end=%2,asetpts=PTS-STARTPTS")
-                                   .arg(startSpin_->value(), 0, 'f', 6).arg(end, 0, 'f', 6);
+                                   .arg(range.start, 0, 'f', 6).arg(range.end, 0, 'f', 6);
             }
             args << "-c:a" << "aac" << "-b:a" << "128k";
         }
@@ -686,7 +736,7 @@ QStringList MainWindow::ffmpegArguments() const
         const QString base = filters.isEmpty() ? "null" : filters.join(',');
         args << "-filter_complex" << base + ",split[a][b];[a]palettegen[p];[b][p]paletteuse" << "-an";
     }
-    args << "-progress" << "pipe:1" << "-nostats" << outputEdit_->text();
+    args << "-progress" << "pipe:1" << "-nostats" << activeTempPath_;
     return args;
 }
 
@@ -722,15 +772,26 @@ void MainWindow::startConversion()
         QMessageBox::critical(this, "MovPress", uiText("ffmpeg was not found in PATH.", "ffmpeg не найден в PATH."));
         return;
     }
-    activeOutputPath_ = outputEdit_->text();
+    activeOutputPath_ = outputInfo.absoluteFilePath();
+    activeTempPath_ = outputInfo.dir().filePath(outputInfo.fileName() + ".movpress-partial");
+    if (QFileInfo(activeTempPath_).absoluteFilePath() == QFileInfo(inputEdit_->text()).absoluteFilePath())
+        activeTempPath_ += ".tmp";
+    QFile::remove(activeTempPath_);
+    openButton_->setEnabled(false);
+    revealButton_->setEnabled(false);
     activeSourceSize_ = sourceSize_;
     conversionCancelled_ = false;
     setRunning(true);
-    mediaPlayer_->pause();
+    if (QFileInfo(mediaPlayer_->source().toLocalFile()).absoluteFilePath() == activeOutputPath_) {
+        mediaPlayer_->stop();
+        mediaPlayer_->setSource({});
+        previewingOutput_ = false;
+    } else {
+        mediaPlayer_->pause();
+    }
     progressBuffer_.clear();
-    targetDuration_ = durationSpin_->value() > 0
-                          ? durationSpin_->value()
-                          : qMax(0.0, sourceDuration_ - startSpin_->value());
+    const auto range = selectedTrimRange();
+    targetDuration_ = qMax(0.0, range.end - range.start);
     progress_->setRange(targetDuration_ > 0 ? 0 : 0, targetDuration_ > 0 ? 1000 : 0);
     progress_->setValue(0);
     statusLabel_->setText(uiText("Converting…", "Конвертация…"));
@@ -744,16 +805,18 @@ void MainWindow::cancelConversion()
     statusLabel_->setText(uiText("Cancelling…", "Отмена…"));
     process_.terminate();
     QTimer::singleShot(1500, this, [this] {
-        if (process_.state() != QProcess::NotRunning) process_.kill();
+        if (conversionCancelled_ && process_.state() != QProcess::NotRunning) process_.kill();
     });
 }
 
 void MainWindow::readProgress()
 {
     progressBuffer_ += process_.readAllStandardOutput();
-    const QList<QByteArray> lines = progressBuffer_.split('\n');
-    progressBuffer_ = lines.constLast();
-    for (const QByteArray &line : lines) {
+    const int newline = progressBuffer_.lastIndexOf('\n');
+    if (newline < 0) return;
+    const QByteArray complete = progressBuffer_.left(newline);
+    progressBuffer_ = progressBuffer_.mid(newline + 1);
+    for (const QByteArray &line : complete.split('\n')) {
         if (line.startsWith("out_time_us=") && targetDuration_ > 0) {
             const double seconds = line.mid(12).toDouble() / 1000000.0;
             const int value = qBound(0, qRound(seconds / targetDuration_ * 1000.0), 1000);
@@ -765,27 +828,70 @@ void MainWindow::readProgress()
     }
 }
 
+bool MainWindow::publishConvertedFile()
+{
+    if (activeTempPath_.isEmpty() || !QFileInfo::exists(activeTempPath_)) return false;
+    if (QFileInfo(mediaPlayer_->source().toLocalFile()).absoluteFilePath() == activeOutputPath_) {
+        mediaPlayer_->stop();
+        mediaPlayer_->setSource({});
+        previewingOutput_ = false;
+    }
+    if (!QFileInfo::exists(activeOutputPath_))
+        return QFile::rename(activeTempPath_, activeOutputPath_);
+
+    const QString backupPath = activeOutputPath_ + ".movpress-previous";
+    QFile::remove(backupPath);
+    if (!QFile::rename(activeOutputPath_, backupPath)) return false;
+    if (!QFile::rename(activeTempPath_, activeOutputPath_)) {
+        QFile::rename(backupPath, activeOutputPath_);
+        return false;
+    }
+    QFile::remove(backupPath);
+    return true;
+}
+
 void MainWindow::conversionFinished(int exitCode, QProcess::ExitStatus status)
 {
     setRunning(false);
     if (conversionCancelled_) {
-        QFile::remove(activeOutputPath_);
+        QFile::remove(activeTempPath_);
         statusLabel_->setText(uiText("Conversion cancelled", "Конвертация отменена"));
+        const bool previousOutput = QFileInfo::exists(activeOutputPath_);
+        openButton_->setEnabled(previousOutput);
+        revealButton_->setEnabled(previousOutput);
     } else if (status == QProcess::NormalExit && exitCode == 0) {
-        const auto size = QFileInfo(activeOutputPath_).size();
-        const double saved = activeSourceSize_ > 0 ? (1.0 - static_cast<double>(size) / activeSourceSize_) * 100.0 : 0.0;
-        statusLabel_->setText(uiText("Done: %1 MB → %2 MB · saved %3%",
-                                     "Готово: %1 МБ → %2 МБ · экономия %3%")
-                                  .arg(activeSourceSize_ / 1048576.0, 0, 'f', 1)
-                                  .arg(size / 1048576.0, 0, 'f', 1)
-                                  .arg(saved, 0, 'f', 0));
-        openButton_->setEnabled(true);
-        revealButton_->setEnabled(true);
-        previewingOutput_ = true;
-        mediaPlayer_->setSource(QUrl::fromLocalFile(activeOutputPath_));
+        if (!publishConvertedFile()) {
+            statusLabel_->setText(uiText("Conversion failed", "Ошибка конвертации"));
+            const bool previousOutput = QFileInfo::exists(activeOutputPath_);
+            openButton_->setEnabled(previousOutput);
+            revealButton_->setEnabled(previousOutput);
+            QMessageBox::critical(this, "MovPress",
+                                  uiText("Could not replace the output file. The encoded file was left beside it.",
+                                         "Не удалось заменить файл результата. Готовый файл оставлен рядом."));
+        } else {
+            const auto size = QFileInfo(activeOutputPath_).size();
+            const double saved = activeSourceSize_ > 0 ? (1.0 - static_cast<double>(size) / activeSourceSize_) * 100.0 : 0.0;
+            statusLabel_->setText(uiText("Done: %1 MB → %2 MB · saved %3%",
+                                         "Готово: %1 МБ → %2 МБ · экономия %3%")
+                                      .arg(activeSourceSize_ / 1048576.0, 0, 'f', 1)
+                                      .arg(size / 1048576.0, 0, 'f', 1)
+                                      .arg(saved, 0, 'f', 0));
+            openButton_->setEnabled(true);
+            revealButton_->setEnabled(true);
+            previewingOutput_ = true;
+            mediaPlayer_->setSource(QUrl::fromLocalFile(activeOutputPath_));
+        }
     } else {
+        QFile::remove(activeTempPath_);
         statusLabel_->setText(uiText("Conversion failed", "Ошибка конвертации"));
-        QMessageBox::critical(this, "MovPress", QString::fromUtf8(process_.readAllStandardError()).right(3000));
+        const bool previousOutput = QFileInfo::exists(activeOutputPath_);
+        openButton_->setEnabled(previousOutput);
+        revealButton_->setEnabled(previousOutput);
+        const QString ffmpegError = QString::fromUtf8(process_.readAllStandardError()).right(3000).trimmed();
+        QMessageBox::critical(this, "MovPress",
+                              ffmpegError.isEmpty()
+                                  ? uiText("Conversion failed.", "Ошибка конвертации.")
+                                  : ffmpegError);
     }
     if (closeAfterProcess_) QTimer::singleShot(0, this, &QWidget::close);
 }
@@ -793,7 +899,11 @@ void MainWindow::conversionFinished(int exitCode, QProcess::ExitStatus status)
 void MainWindow::conversionError(QProcess::ProcessError error)
 {
     if (error != QProcess::FailedToStart) return;
+    QFile::remove(activeTempPath_);
     setRunning(false);
+    const bool previousOutput = QFileInfo::exists(activeOutputPath_);
+    openButton_->setEnabled(previousOutput);
+    revealButton_->setEnabled(previousOutput);
     statusLabel_->setText(uiText("Could not start ffmpeg", "Не удалось запустить ffmpeg"));
     QMessageBox::critical(this, "MovPress", uiText("ffmpeg was found, but the process could not be started.",
                                                     "ffmpeg найден, но процесс не удалось запустить."));
@@ -998,10 +1108,9 @@ void MainWindow::togglePlayback()
         mediaPlayer_->pause();
     else {
         if (!previewingOutput_) {
-            const qint64 start = qRound64(startSpin_->value() * 1000.0);
-            const qint64 end = durationSpin_->value() > 0
-                                   ? start + qRound64(durationSpin_->value() * 1000.0)
-                                   : qRound64(sourceDuration_ * 1000.0);
+            const auto range = selectedTrimRange();
+            const qint64 start = qRound64(range.start * 1000.0);
+            const qint64 end = qRound64(range.end * 1000.0);
             if (mediaPlayer_->position() < start || mediaPlayer_->position() >= end - 50)
                 mediaPlayer_->setPosition(start);
         }
@@ -1017,11 +1126,10 @@ void MainWindow::seekPreview(int value)
 void MainWindow::updatePlaybackPosition(qint64 position)
 {
     if (!previewingOutput_ && !resettingPlayback_ && sourceDuration_ > 0) {
-        const qint64 start = qRound64(startSpin_->value() * 1000.0);
-        const qint64 end = durationSpin_->value() > 0
-                               ? start + qRound64(durationSpin_->value() * 1000.0)
-                               : qRound64(sourceDuration_ * 1000.0);
-        if (position >= end - 20 && mediaPlayer_->playbackState() == QMediaPlayer::PlayingState) {
+        const auto range = selectedTrimRange();
+        const qint64 start = qRound64(range.start * 1000.0);
+        const qint64 end = qRound64(range.end * 1000.0);
+        if (end > start && position >= end - 20 && mediaPlayer_->playbackState() == QMediaPlayer::PlayingState) {
             resettingPlayback_ = true;
             mediaPlayer_->pause();
             mediaPlayer_->setPosition(start);
@@ -1047,11 +1155,9 @@ void MainWindow::updatePlaybackDuration(qint64 duration)
 void MainWindow::updatePreviewRange(bool seekToStart)
 {
     if (previewingOutput_ || !mediaPlayer_ || sourceDuration_ <= 0) return;
-    const qint64 start = qRound64(startSpin_->value() * 1000.0);
-    const qint64 end = durationSpin_->value() > 0
-                           ? qMin(qRound64(sourceDuration_ * 1000.0),
-                                  start + qRound64(durationSpin_->value() * 1000.0))
-                           : qRound64(sourceDuration_ * 1000.0);
+    const auto range = selectedTrimRange();
+    const qint64 start = qRound64(range.start * 1000.0);
+    const qint64 end = qRound64(range.end * 1000.0);
     playbackSlider_->setRange(static_cast<int>(start), static_cast<int>(qMax(start, end)));
     if (seekToStart) {
         mediaPlayer_->pause();
@@ -1063,9 +1169,7 @@ void MainWindow::updatePreviewRange(bool seekToStart)
 
 void MainWindow::loadSettings()
 {
-    const QStringList applicationKeys = {
-        "windowGeometry", "width", "fps", "crf", "preset", "audio", "theme", "language", "lastDirectory"
-    };
+    const QStringList applicationKeys = applicationSettingKeys();
     const bool needsMigration = !QFileInfo::exists(settingsFilePath());
     QSettings settings(settingsFilePath(), QSettings::IniFormat);
     QMap<QString, QVariant> cleanValues;
